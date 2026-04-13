@@ -691,7 +691,7 @@ function Show-CodexShellHints {
                 (Get-CodexHintEntry -Name 'auth-batch' -Description 'batch-download authenticated assets'),
                 (Get-CodexHintEntry -Name 'auth-chatgpt-browser' -Description 'open the dedicated ChatGPT automation browser'),
                 (Get-CodexHintEntry -Name 'auth-chatgpt-list' -Description 'list ChatGPT conversations' -Example 'auth-chatgpt-list -Limit 20'),
-                (Get-CodexHintEntry -Name 'auth-chatgpt-ask' -Description 'send a prompt and save the result' -Example "auth-chatgpt-ask -NewChat -Prompt 'Summarize this topic.' -DestinationDir C:\Exports"),
+                (Get-CodexHintEntry -Name 'auth-chatgpt-ask' -Description 'send a prompt and save the result; prompt can be positional, pipeline, or -PromptPath' -Example 'auth-chatgpt-ask -NewChat -DestinationDir C:\Exports "Summarize Newton''s laws."'),
                 (Get-CodexHintEntry -Name 'auth-help' -Description 'show auth helper help')
             )
         }

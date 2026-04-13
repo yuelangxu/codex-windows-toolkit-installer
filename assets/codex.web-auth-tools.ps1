@@ -487,6 +487,38 @@ function Resolve-CodexExistingDirectory {
     return $item.FullName
 }
 
+function ConvertFrom-CodexPromptBase64 {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PromptBase64
+    )
+
+    try {
+        $bytes = [Convert]::FromBase64String($PromptBase64)
+        return [Text.Encoding]::UTF8.GetString($bytes)
+    } catch {
+        throw 'PromptBase64 is not valid UTF-8 base64 text.'
+    }
+}
+
+function Get-CodexPromptUsageHint {
+    [CmdletBinding()]
+    param()
+
+    return @(
+        'PowerShell-safe prompt patterns:',
+        '  auth-chatgpt-ask -NewChat -DestinationDir C:\Exports "Summarize Newton''s laws."',
+        '  $prompt = @''',
+        '  Newton''s laws of motion',
+        '  ''@',
+        '  auth-chatgpt-ask -NewChat -DestinationDir C:\Exports $prompt',
+        '  Get-Content -Raw C:\Prompts\ask.txt | auth-chatgpt-ask -NewChat -DestinationDir C:\Exports',
+        '  auth-chatgpt-ask -NewChat -DestinationDir C:\Exports -PromptPath C:\Prompts\ask.txt',
+        "Avoid Bash-style single-quoted escaping such as Newton\'s inside a PowerShell single-quoted string."
+    ) -join [Environment]::NewLine
+}
+
 function Start-CodexAuthBrowser {
     [CmdletBinding()]
     param(
@@ -1145,11 +1177,17 @@ function Save-CodexChatGptConversation {
 function Invoke-CodexChatGptPrompt {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)]
+        [Parameter(Position = 0)]
+        [Alias('Text')]
         [string]$Prompt,
 
         [Parameter(Mandatory = $true)]
         [string]$DestinationDir,
+
+        [Alias('PromptFile')]
+        [string]$PromptPath,
+
+        [string]$PromptBase64,
 
         [string]$Url = 'https://chatgpt.com/',
         [string]$PageUrlContains = 'chatgpt.com',
@@ -1163,42 +1201,93 @@ function Invoke-CodexChatGptPrompt {
         [int]$Port = 0,
         [ValidateSet('edge', 'chrome')]
         [string]$Browser,
-        [switch]$ForceRestartBrowser
+        [switch]$ForceRestartBrowser,
+
+        [Parameter(ValueFromPipeline = $true)]
+        [AllowEmptyString()]
+        [string]$PromptInput
     )
 
-    $resolvedDestinationDir = Resolve-CodexExistingDirectory -Path $DestinationDir -Label 'ChatGPT destination directory'
-    $chatgptContext = Initialize-CodexChatGptCommandContext -Browser $Browser -Port $Port -Url $Url -ForceRestartBrowser:$ForceRestartBrowser
-    $Port = $chatgptContext.Port
-    $arguments = @('chatgpt-ask', '--cdp', "http://127.0.0.1:$Port", '--url', $Url, '--prompt', $Prompt, '--destination-dir', $resolvedDestinationDir, '--timeout', $TimeoutSeconds.ToString())
-    if (-not [string]::IsNullOrWhiteSpace($PageUrlContains)) {
-        $arguments += @('--page-url-contains', $PageUrlContains)
+    begin {
+        $pipelinePromptLines = New-Object System.Collections.Generic.List[string]
     }
-    if (-not [string]::IsNullOrWhiteSpace($ConversationId)) {
-        $arguments += @('--conversation-id', $ConversationId)
-    }
-    if (-not [string]::IsNullOrWhiteSpace($TitleContains)) {
-        $arguments += @('--title-contains', $TitleContains)
-    }
-    if ($NewChat) {
-        $arguments += '--new-chat'
-    }
-    if ($ExportHistoryBefore) {
-        $arguments += '--export-history-before'
-    }
-    if (-not [string]::IsNullOrWhiteSpace($ResultName)) {
-        $arguments += @('--result-name', $ResultName)
-    }
-    if ($null -ne $AttachmentPath) {
-        foreach ($path in $AttachmentPath) {
-            if ([string]::IsNullOrWhiteSpace($path)) {
-                continue
-            }
-            $resolvedAttachment = (Resolve-Path -LiteralPath $path -ErrorAction Stop).Path
-            $arguments += @('--attachment', $resolvedAttachment)
+
+    process {
+        if ($MyInvocation.ExpectingInput -and $null -ne $PromptInput) {
+            [void]$pipelinePromptLines.Add([string]$PromptInput)
         }
     }
 
-    Invoke-CodexAuthHelper -Arguments $arguments
+    end {
+        $hasPromptPath = -not [string]::IsNullOrWhiteSpace($PromptPath)
+        $hasPromptBase64 = -not [string]::IsNullOrWhiteSpace($PromptBase64)
+        $hasInlinePrompt = -not [string]::IsNullOrWhiteSpace($Prompt)
+        $hasPipelinePrompt = $pipelinePromptLines.Count -gt 0
+
+        $promptSourceCount = 0
+        if ($hasPromptPath) { $promptSourceCount += 1 }
+        if ($hasPromptBase64) { $promptSourceCount += 1 }
+        if ($hasInlinePrompt) { $promptSourceCount += 1 }
+        if ($hasPipelinePrompt) { $promptSourceCount += 1 }
+
+        if ($promptSourceCount -eq 0) {
+            throw ("A prompt is required.`n{0}" -f (Get-CodexPromptUsageHint))
+        }
+
+        if ($promptSourceCount -gt 1) {
+            throw 'Use exactly one prompt source: inline text, pipeline input, -PromptPath, or -PromptBase64.'
+        }
+
+        $resolvedPrompt = $null
+        if ($hasPromptPath) {
+            $resolvedPromptPath = (Resolve-Path -LiteralPath $PromptPath -ErrorAction Stop).Path
+            $resolvedPrompt = Get-Content -LiteralPath $resolvedPromptPath -Raw -ErrorAction Stop
+        } elseif ($hasPromptBase64) {
+            $resolvedPrompt = ConvertFrom-CodexPromptBase64 -PromptBase64 $PromptBase64
+        } elseif ($hasInlinePrompt) {
+            $resolvedPrompt = $Prompt
+        } elseif ($hasPipelinePrompt) {
+            $resolvedPrompt = [string]::Join([Environment]::NewLine, $pipelinePromptLines)
+        }
+
+        if ([string]::IsNullOrWhiteSpace($resolvedPrompt)) {
+            throw ("Prompt text resolved to an empty string.`n{0}" -f (Get-CodexPromptUsageHint))
+        }
+
+        $resolvedDestinationDir = Resolve-CodexExistingDirectory -Path $DestinationDir -Label 'ChatGPT destination directory'
+        $chatgptContext = Initialize-CodexChatGptCommandContext -Browser $Browser -Port $Port -Url $Url -ForceRestartBrowser:$ForceRestartBrowser
+        $Port = $chatgptContext.Port
+        $arguments = @('chatgpt-ask', '--cdp', "http://127.0.0.1:$Port", '--url', $Url, '--prompt', $resolvedPrompt, '--destination-dir', $resolvedDestinationDir, '--timeout', $TimeoutSeconds.ToString())
+        if (-not [string]::IsNullOrWhiteSpace($PageUrlContains)) {
+            $arguments += @('--page-url-contains', $PageUrlContains)
+        }
+        if (-not [string]::IsNullOrWhiteSpace($ConversationId)) {
+            $arguments += @('--conversation-id', $ConversationId)
+        }
+        if (-not [string]::IsNullOrWhiteSpace($TitleContains)) {
+            $arguments += @('--title-contains', $TitleContains)
+        }
+        if ($NewChat) {
+            $arguments += '--new-chat'
+        }
+        if ($ExportHistoryBefore) {
+            $arguments += '--export-history-before'
+        }
+        if (-not [string]::IsNullOrWhiteSpace($ResultName)) {
+            $arguments += @('--result-name', $ResultName)
+        }
+        if ($null -ne $AttachmentPath) {
+            foreach ($path in $AttachmentPath) {
+                if ([string]::IsNullOrWhiteSpace($path)) {
+                    continue
+                }
+                $resolvedAttachment = (Resolve-Path -LiteralPath $path -ErrorAction Stop).Path
+                $arguments += @('--attachment', $resolvedAttachment)
+            }
+        }
+
+        Invoke-CodexAuthHelper -Arguments $arguments
+    }
 }
 
 function Remove-CodexChatGptConversation {
@@ -1394,9 +1483,11 @@ Codex web-auth helpers
    auth-chatgpt-save -DestinationDir C:\Exports -TitleContains 'Atomic Physics'
    auth-chatgpt-delete -TitleContains 'Atomic Physics' -Force
    auth-chatgpt-delete -CurrentChat -ExportDir C:\Exports -Force
-   auth-chatgpt-ask -NewChat -Prompt 'Summarize atomic orbitals.' -DestinationDir C:\Exports
-   auth-chatgpt-ask -TitleContains 'Atomic Physics' -Prompt 'Continue from the previous derivation.' -DestinationDir C:\Exports -ExportHistoryBefore
-   auth-chatgpt-ask -NewChat -Prompt 'Read the attached file and summarize it.' -AttachmentPath C:\Docs\notes.pdf,C:\Pics\diagram.png -DestinationDir C:\Exports
+   auth-chatgpt-ask -NewChat -DestinationDir C:\Exports "Summarize atomic orbitals."
+   auth-chatgpt-ask -TitleContains "Atomic Physics" -DestinationDir C:\Exports "Continue from the previous derivation." -ExportHistoryBefore
+   auth-chatgpt-ask -NewChat -DestinationDir C:\Exports "Read the attached file and summarize it." -AttachmentPath C:\Docs\notes.pdf,C:\Pics\diagram.png
+   Get-Content -Raw C:\Prompts\ask.txt | auth-chatgpt-ask -NewChat -DestinationDir C:\Exports
+   auth-chatgpt-ask -NewChat -DestinationDir C:\Exports -PromptPath C:\Prompts\ask.txt
 
 9. ChatGPT safety note:
    Broad keywords and -SaveAll can touch too many conversations too quickly.
@@ -1406,7 +1497,8 @@ Codex web-auth helpers
    ChatGPT export/ask commands now expect an existing destination directory. If the directory does not exist, they fail fast.
    ChatGPT browser actions are now rate-limited by default across commands, so repeated list/open/ask/delete runs are spaced out automatically.
    Prompt filling and the actual send click are intentionally separate: the request spacing happens before a command starts, but once the prompt is in the box the send action should happen immediately.
-   If ChatGPT shows a Too many requests dialog, the tool now tries to click Got it and waits about 10 seconds before retrying.
+   PowerShell parses quotes before auth-chatgpt-ask runs, so prompts with apostrophes should use double quotes, a variable / here-string, pipeline input, or -PromptPath.
+   If ChatGPT shows a Too many requests dialog, the tool now tries to click Got it, cool down briefly, and then refresh before retrying.
    ChatGPT deletion now prefers an authenticated API path first and only falls back to UI actions when needed.
    The page helper now injects reduced-motion styles and hides common floating overlays that intercept clicks.
    ChatGPT deletion is destructive. Use auth-chatgpt-delete with -Force, and optionally -ExportDir to back up the chat before removing it.

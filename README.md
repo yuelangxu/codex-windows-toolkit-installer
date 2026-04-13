@@ -86,6 +86,7 @@ This installer packages those rough edges into a source-visible, repairable Powe
 
 These commands extend the `authweb` family with authenticated ChatGPT browser automation, export, save, prompt, and delete workflows.
 They now auto-bootstrap a ChatGPT-ready browser session in one command, and their managed browser state lives under the PowerShell toolkit root instead of the Desktop.
+`auth-chatgpt-ask` also accepts prompt text as a positional argument, pipeline input, or `-PromptPath`, which makes it much more forgiving for LLM-generated PowerShell commands that would otherwise trip over quote escaping.
 
 ## Why this improves Codex productivity
 
