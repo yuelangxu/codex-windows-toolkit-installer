@@ -622,7 +622,9 @@ function Update-CodexPowerShellMetadata {
         'codehint', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'zi', 'lg', 'j', 'bench',
         'json', 'yaml', 'grepcode', 'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline', 'doc-scan',
         'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'auth-browser', 'auth-links', 'auth-spec',
-        'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-help'
+        'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-chatgpt-dump', 'auth-chatgpt-export',
+        'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save',
+        'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-help'
     )
 
     $env:CODEX_POWERSHELL_HINTS = [string]::Join(' | ', $hintParts)
@@ -687,6 +689,8 @@ function Show-CodexShellHints {
                 (Get-CodexHintEntry -Name 'auth-spec' -Description 'build a download spec file'),
                 (Get-CodexHintEntry -Name 'auth-save' -Description 'save authenticated page content'),
                 (Get-CodexHintEntry -Name 'auth-batch' -Description 'batch-download authenticated assets'),
+                (Get-CodexHintEntry -Name 'auth-chatgpt-list' -Description 'list ChatGPT conversations' -Example 'auth-chatgpt-list -Limit 20'),
+                (Get-CodexHintEntry -Name 'auth-chatgpt-ask' -Description 'send a prompt and save the result' -Example "auth-chatgpt-ask -NewChat -Prompt 'Summarize this topic.' -DestinationDir C:\Exports"),
                 (Get-CodexHintEntry -Name 'auth-help' -Description 'show auth helper help')
             )
         }
@@ -717,7 +721,7 @@ function Show-CodexStartupBanner {
         "predict=$($env:CODEX_READLINE_MODE)",
         "nav=$($env:CODEX_NAV_MODE)",
         'toolbelt: rg fd fzf jq yq eza z lazygit just hyperfine 7z xh mise dust procs',
-        'docs: ocr-smart pdf-smart translate-smart doc-pipeline auth-browser',
+        'docs: ocr-smart pdf-smart translate-smart doc-pipeline auth-browser auth-chatgpt-ask',
         'hint: codehint'
     )
 
@@ -737,7 +741,7 @@ function whichall {
     [CmdletBinding()]
     param(
         [Parameter(Position = 0, ValueFromRemainingArguments = $true)]
-        [string[]]$Name = @('codehint', 'toolkit-inventory', 'codex', 'curl', 'wget', 'capture2text', 'rg', 'git', 'gh', 'node', 'python', 'fd', 'fzf', 'jq', 'yq', 'uv', 'pnpm', 'bat', 'delta', 'eza', 'zoxide', 'starship', 'lazygit', 'just', 'hyperfine', '7z', 'sd', 'xh', 'mise', 'dust', 'procs', 'nougat', 'ocrmypdf', 'pdftotext', 'pdftoppm', 'mutool', 'tesseract', 'Capture2Text_CLI', 'ollama', 'llava', 'easyocr-read', 'paddleocr-read', 'donut-ocr', 'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline', 'doc-scan', 'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'lg', 'j', 'bench', 'json', 'yaml', 'grepcode', 'auth-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-moodle-spec', 'auth-sharepoint-spec', 'auth-panopto-spec', 'auth-moodle-dump', 'auth-sharepoint-dump', 'auth-panopto-dump', 'auth-help')
+        [string[]]$Name = @('codehint', 'toolkit-inventory', 'codex', 'curl', 'wget', 'capture2text', 'rg', 'git', 'gh', 'node', 'python', 'fd', 'fzf', 'jq', 'yq', 'uv', 'pnpm', 'bat', 'delta', 'eza', 'zoxide', 'starship', 'lazygit', 'just', 'hyperfine', '7z', 'sd', 'xh', 'mise', 'dust', 'procs', 'nougat', 'ocrmypdf', 'pdftotext', 'pdftoppm', 'mutool', 'tesseract', 'Capture2Text_CLI', 'ollama', 'llava', 'easyocr-read', 'paddleocr-read', 'donut-ocr', 'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline', 'doc-scan', 'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'lg', 'j', 'bench', 'json', 'yaml', 'grepcode', 'auth-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-moodle-spec', 'auth-sharepoint-spec', 'auth-panopto-spec', 'auth-moodle-dump', 'auth-sharepoint-dump', 'auth-panopto-dump', 'auth-chatgpt-dump', 'auth-chatgpt-export', 'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-help')
     )
 
     foreach ($query in $Name) {
@@ -782,19 +786,24 @@ function Show-CodexToolkitInventory {
         }
         @{
             Title = 'Web Auth'
-            Names = @('auth-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-help')
+            Names = @('auth-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-chatgpt-dump', 'auth-chatgpt-export', 'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-help')
         }
     )
 
     foreach ($group in $commandGroups) {
-        $rows = @(whichall @($group.Names))
-        if ($rows.Count -eq 0) {
-            continue
+        $rows = foreach ($name in $group.Names) {
+            $command = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
+            [pscustomobject]@{
+                Name        = $name
+                Status      = if ($null -eq $command) { 'Missing' } else { 'Available' }
+                CommandType = if ($null -eq $command) { '' } else { $command.CommandType }
+                Target      = if ($null -eq $command) { '' } else { Get-CommandTarget -Command $command }
+            }
         }
 
         Write-Host ''
         Write-Host ("[{0}]" -f $group.Title) -ForegroundColor Yellow
-        $rows | Sort-Object Query, Name | Format-Table -AutoSize
+        $rows | Format-Table Name, Status, CommandType, Target -AutoSize
     }
 }
 

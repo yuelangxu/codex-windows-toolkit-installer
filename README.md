@@ -75,12 +75,24 @@ This installer packages those rough edges into a source-visible, repairable Powe
 - `codex.ocr-translate-tools.ps1`
 - `codex.web-auth-tools.ps1`
 
+### ChatGPT automation helpers
+
+- `auth-chatgpt-list`
+- `auth-chatgpt-open`
+- `auth-chatgpt-save`
+- `auth-chatgpt-ask`
+- `auth-chatgpt-dump`
+- `auth-chatgpt-delete`
+
+These commands extend the `authweb` family with authenticated ChatGPT browser automation, export, save, prompt, and delete workflows.
+
 ## Why this improves Codex productivity
 
 This toolkit raises the floor and the ceiling for Codex on Windows.
 
 - It gives Codex a stable set of command names and wrappers, so suggested commands are more likely to work immediately.
 - It front-loads practical tooling for inspection, refactoring, automation, scraping, document handling, and debugging.
+- It adds authenticated ChatGPT automation commands to the same PowerShell toolbelt, so browser-driven save, dump, ask, and cleanup workflows live beside the rest of the auth tooling.
 - It improves shell feedback with inventory, prediction, aliases, and prompt context, which shortens the loop between idea and execution.
 - It avoids common Windows failure modes around OCR, Python package compatibility, DLL paths, and profile location mismatches.
 - It makes machine setup repeatable, so rebuilding a usable environment no longer depends on memory or handwritten notes.

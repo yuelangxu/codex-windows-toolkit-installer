@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import random
 import re
 import sys
 import time
@@ -26,6 +27,39 @@ NAVIGATION_TEXT = {
     "log out", "logout", "contacts", "notifications settings",
 }
 
+CHATGPT_HOSTS = {"chatgpt.com", "chat.openai.com"}
+DEFAULT_STUDY_KEYWORDS = [
+    "study", "learning", "learn", "course", "lecture", "lectures", "lecture note", "notes",
+    "homework", "assignment", "problem set", "worksheet", "exam", "quiz", "revision", "revise",
+    "moodle", "university", "ucl", "paper", "essay", "dissertation", "lab", "physics", "math",
+    "mathematics", "calculus", "algebra", "python", "coding interview", "research", "flashcards",
+    "学习", "课程", "讲义", "笔记", "作业", "考试", "复习", "论文", "实验", "物理", "数学", "编程",
+]
+
+CHATGPT_GUARD_PHRASES = [
+    "unusual activity",
+    "try again later",
+    "too many requests",
+    "making requests too quickly",
+    "temporarily unavailable",
+    "temporarily blocked",
+    "temporarily limited access to your conversations",
+    "request blocked",
+    "verify you are human",
+    "checking your browser",
+    "access denied",
+    "our systems have detected",
+    "temporary chat",
+]
+
+CHATGPT_BROAD_KEYWORDS = {
+    "study", "learning", "learn", "note", "notes", "course", "courses", "lecture", "lectures",
+    "assignment", "university", "ucl", "physics", "math", "mathematics", "research", "paper",
+    "essay", "coding", "python", "car", "cars", "flower", "flowers", "garden",
+}
+
+CHATGPT_RATE_LIMIT_STATE_PATH = Path.home() / ".codex" / "web-auth-state" / "chatgpt_rate_limit.json"
+
 
 def sanitize(name: str, max_len: int = 160) -> str:
     value = re.sub(r"\s+", " ", (name or "").strip())
@@ -48,12 +82,31 @@ def write_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def ensure_existing_directory(path_value: str, label: str) -> Path:
+    path = Path(path_value).expanduser().resolve()
+    if not path.exists():
+        raise RuntimeError(f"{label} does not exist: {path}")
+    if not path.is_dir():
+        raise RuntimeError(f"{label} is not a directory: {path}")
+    return path
+
+
 def write_shortcut(path: Path, url: str) -> None:
     write_text(path, f"[InternetShortcut]\nURL={url}\n")
 
 
 def clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", (value or "").strip())
+
+
+def env_float(name: str, default: float) -> float:
+    raw = clean_text(os.environ.get(name, ""))
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except Exception:
+        return default
 
 
 def filename_from_response(url: str, headers: Dict[str, str], fallback_name: str) -> str:
@@ -218,6 +271,1896 @@ def page_links_payload(page) -> Dict[str, Any]:
     )
     payload["links"] = normalize_links(payload.get("links", []))
     return payload
+
+
+def normalize_keyword_list(raw_keywords: Optional[List[str]], fallback_keywords: Optional[List[str]] = None) -> List[str]:
+    values = raw_keywords or fallback_keywords or []
+    keywords: List[str] = []
+    seen = set()
+    for raw in values:
+        for part in re.split(r"[;,]", raw or ""):
+            keyword = clean_text(part)
+            if not keyword:
+                continue
+            lowered = keyword.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            keywords.append(keyword)
+    return keywords
+
+
+def build_chatgpt_risk_report(
+    keywords: Optional[List[str]],
+    topic_label: str,
+    save_all: bool,
+    use_study_keywords: bool,
+    explicit_limit: Optional[int],
+) -> Dict[str, Any]:
+    keyword_list = normalize_keyword_list(keywords)
+    warnings: List[str] = []
+    risk_level = "low"
+    suggested_limit = 0
+
+    broad_hits = []
+    for keyword in keyword_list:
+        lowered = keyword.lower()
+        if lowered in CHATGPT_BROAD_KEYWORDS or len(lowered) <= 3:
+            broad_hits.append(keyword)
+
+    if save_all:
+        risk_level = "very_high"
+        suggested_limit = 8
+        warnings.append("Save-all mode is the broadest mode and is most likely to trigger temporary ChatGPT protections.")
+
+    if use_study_keywords:
+        if risk_level in {"low", "medium"}:
+            risk_level = "high"
+        suggested_limit = max(suggested_limit, 20)
+        warnings.append("The built-in learning template uses broad keywords and can match a large part of chat history.")
+
+    if broad_hits:
+        if risk_level == "low":
+            risk_level = "medium"
+        elif risk_level == "medium":
+            risk_level = "high"
+        suggested_limit = max(suggested_limit, 20)
+        warnings.append(f"Broad/generic keywords detected: {', '.join(broad_hits[:8])}")
+
+    if len(keyword_list) >= 8:
+        if risk_level in {"low", "medium"}:
+            risk_level = "high"
+        suggested_limit = max(suggested_limit, 25)
+        warnings.append("A large keyword list can still fan out to many conversations.")
+
+    auto_limited = False
+    effective_limit = explicit_limit if explicit_limit and explicit_limit > 0 else None
+    if effective_limit is None and suggested_limit > 0:
+        effective_limit = suggested_limit
+        auto_limited = True
+        warnings.append(
+            f"No explicit limit was supplied for topic '{clean_text(topic_label) or 'topic'}'. "
+            f"A safer sample limit of {effective_limit} will be applied automatically."
+        )
+    elif effective_limit is not None and suggested_limit > 0 and effective_limit > suggested_limit * 2:
+        warnings.append(
+            f"The requested limit ({effective_limit}) is much higher than the safer sample size ({suggested_limit}) "
+            "and may increase the chance of temporary restrictions."
+        )
+
+    return {
+        "risk_level": risk_level,
+        "warnings": dedupe_strings(warnings),
+        "suggested_limit": suggested_limit,
+        "effective_limit": effective_limit,
+        "auto_limited": auto_limited,
+    }
+
+
+def detect_chatgpt_guard_signal(page) -> Optional[Dict[str, str]]:
+    url = page.url or ""
+    url_lc = url.lower()
+    if any(token in url_lc for token in ["/auth/error", "/blocked", "/sorry", "cloudflare"]):
+        return {"kind": "url", "signal": url}
+
+    body_text = ""
+    try:
+        body_text = clean_text(page.locator("body").inner_text(timeout=2500))
+    except Exception:
+        return None
+
+    body_lc = body_text.lower()
+    for phrase in CHATGPT_GUARD_PHRASES:
+        if phrase in body_lc:
+            return {"kind": "text", "signal": phrase}
+    return None
+
+
+def chatgpt_iteration_delay_seconds(risk_level: str) -> float:
+    if risk_level in {"high", "very_high"}:
+        return random.uniform(2.4, 3.6)
+    if risk_level == "medium":
+        return random.uniform(1.8, 2.8)
+    return random.uniform(1.2, 2.0)
+
+
+def get_chatgpt_rate_limit_config() -> Dict[str, float]:
+    browse_delay = max(0.0, env_float("CODEX_CHATGPT_BROWSE_DELAY_SECONDS", 2.5))
+    mutation_delay = max(browse_delay, env_float("CODEX_CHATGPT_MUTATION_DELAY_SECONDS", 8.0))
+    jitter_delay = max(0.0, env_float("CODEX_CHATGPT_DELAY_JITTER_SECONDS", 0.6))
+    return {
+        "browse_delay": browse_delay,
+        "mutation_delay": mutation_delay,
+        "jitter_delay": jitter_delay,
+    }
+
+
+def read_chatgpt_rate_limit_state() -> Dict[str, Any]:
+    path = CHATGPT_RATE_LIMIT_STATE_PATH
+    try:
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return {}
+
+
+def write_chatgpt_rate_limit_state(state: Dict[str, Any]) -> None:
+    ensure_parent(CHATGPT_RATE_LIMIT_STATE_PATH)
+    CHATGPT_RATE_LIMIT_STATE_PATH.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def throttle_chatgpt_request(category: str, reason: str = "") -> Dict[str, Any]:
+    config = get_chatgpt_rate_limit_config()
+    min_delay = config["mutation_delay"] if clean_text(category).lower() == "mutation" else config["browse_delay"]
+    state = read_chatgpt_rate_limit_state()
+    now = time.time()
+    previous = float(state.get("last_request_ts") or 0.0)
+    elapsed = max(0.0, now - previous)
+    wait_seconds = max(0.0, min_delay - elapsed)
+    if wait_seconds > 0:
+        wait_seconds += random.uniform(0.0, config["jitter_delay"])
+        time.sleep(wait_seconds)
+
+    applied_at = time.time()
+    write_chatgpt_rate_limit_state(
+        {
+            "last_request_ts": applied_at,
+            "last_category": clean_text(category).lower() or "browse",
+            "last_reason": clean_text(reason),
+            "configured_browse_delay": config["browse_delay"],
+            "configured_mutation_delay": config["mutation_delay"],
+            "configured_jitter_delay": config["jitter_delay"],
+        }
+    )
+    return {
+        "category": clean_text(category).lower() or "browse",
+        "slept_seconds": round(wait_seconds, 3),
+        "min_delay_seconds": min_delay,
+        "reason": clean_text(reason),
+    }
+
+
+def get_chatgpt_guard_cooldown_seconds() -> float:
+    return max(1.0, env_float("CODEX_CHATGPT_GOT_IT_COOLDOWN_SECONDS", 10.0))
+
+
+def conversation_id_from_url(url: str) -> str:
+    match = re.search(r"/c/([^/?#]+)", url or "")
+    if match:
+        return match.group(1)
+    path = get_url_path(url)
+    if path:
+        return sanitize(os.path.basename(path))
+    return "conversation"
+
+
+def ensure_chatgpt_sidebar_visible(page) -> None:
+    if get_url_host(page.url) not in CHATGPT_HOSTS:
+        return
+
+    prepare_chatgpt_page(page)
+
+    if page.locator('a[href*="/c/"]').count() > 0:
+        return
+
+    selectors = [
+        'button[aria-label*="sidebar" i]',
+        'button[aria-label*="history" i]',
+        'button[data-testid*="sidebar"]',
+        'button[data-testid*="history"]',
+    ]
+    for selector in selectors:
+        locator = page.locator(selector).first
+        try:
+            if locator.count() > 0:
+                safe_click(locator, timeout=1200, reason=f"sidebar:{selector}")
+                page.wait_for_timeout(800)
+                if page.locator('a[href*="/c/"]').count() > 0:
+                    return
+        except Exception:
+            continue
+
+
+def load_all_chatgpt_sidebar_items(page, max_rounds: int = 45) -> None:
+    ensure_chatgpt_sidebar_visible(page)
+    stable_rounds = 0
+    previous_count = 0
+
+    for _ in range(max_rounds):
+        current_count = page.locator('a[href*="/c/"]').count()
+        if current_count <= previous_count:
+            stable_rounds += 1
+        else:
+            stable_rounds = 0
+            previous_count = current_count
+
+        if stable_rounds >= 3:
+            break
+
+        page.evaluate(
+            """() => {
+                const candidates = [...document.querySelectorAll('*')].filter(node => {
+                    const style = window.getComputedStyle(node);
+                    const hasScrollableArea = node.scrollHeight > node.clientHeight + 80;
+                    const overflowY = style.overflowY;
+                    const isScrollable = overflowY === 'auto' || overflowY === 'scroll';
+                    const hasChatLinks = !!node.querySelector('a[href*="/c/"]');
+                    return hasScrollableArea && isScrollable && hasChatLinks;
+                });
+                const target = candidates.sort((a, b) => b.scrollHeight - a.scrollHeight)[0];
+                if (target) {
+                    target.scrollTop = target.scrollHeight;
+                    return;
+                }
+                window.scrollTo(0, document.body.scrollHeight);
+            }"""
+        )
+        page.wait_for_timeout(650)
+
+
+def extract_chatgpt_sidebar_entries(page) -> List[Dict[str, str]]:
+    payload = page.evaluate(
+        """() => {
+            const clean = value => (value || '').replace(/\\s+/g, ' ').trim();
+            return [...document.querySelectorAll('a[href*="/c/"]')].map((anchor, index) => {
+                const href = anchor.href || '';
+                const title = clean(anchor.innerText || anchor.textContent || anchor.getAttribute('aria-label') || anchor.title || '');
+                const match = href.match(/\\/c\\/([^/?#]+)/);
+                return {
+                    href,
+                    title,
+                    text: title,
+                    conversation_id: match ? match[1] : '',
+                    index: index + 1
+                };
+            });
+        }"""
+    )
+    entries: List[Dict[str, str]] = []
+    seen = set()
+    for item in payload:
+        href = item.get("href", "")
+        conversation_id = item.get("conversation_id") or conversation_id_from_url(href)
+        key = conversation_id or href
+        if not href or key in seen:
+            continue
+        seen.add(key)
+        entries.append(
+            {
+                "href": href,
+                "title": clean_text(item.get("title") or ""),
+                "conversation_id": conversation_id,
+            }
+        )
+    return entries
+
+
+def find_chatgpt_sidebar_entry(
+    entries: List[Dict[str, str]],
+    conversation_id: Optional[str] = None,
+    title_contains: Optional[str] = None,
+) -> Dict[str, str]:
+    if conversation_id:
+        target = clean_text(conversation_id)
+        for entry in entries:
+            if clean_text(entry.get("conversation_id") or "") == target:
+                return entry
+        raise RuntimeError(f"No ChatGPT conversation matched id: {target}")
+
+    if title_contains:
+        needle = clean_text(title_contains).lower()
+        matches = [entry for entry in entries if needle in clean_text(entry.get("title") or "").lower()]
+        if not matches:
+            raise RuntimeError(f"No ChatGPT conversation title matched: {title_contains}")
+        if len(matches) > 1:
+            raise RuntimeError(
+                "Multiple ChatGPT conversations matched the requested title fragment: "
+                + ", ".join([entry.get("title") or entry.get("conversation_id") or "conversation" for entry in matches[:6]])
+            )
+        return matches[0]
+
+    raise RuntimeError("Provide a conversation id or title fragment to select an existing ChatGPT conversation.")
+
+
+def load_full_chatgpt_conversation_history(page, max_rounds: int = 35) -> int:
+    stable_rounds = 0
+    previous_count = 0
+
+    for _ in range(max_rounds):
+        current_count = page.locator('[data-message-author-role], main article').count()
+        if current_count <= previous_count:
+            stable_rounds += 1
+        else:
+            stable_rounds = 0
+            previous_count = current_count
+
+        if stable_rounds >= 3:
+            break
+
+        page.evaluate(
+            """() => {
+                const candidates = [...document.querySelectorAll('main, section, div')].filter(node => {
+                    const style = window.getComputedStyle(node);
+                    const overflowY = style.overflowY;
+                    const isScrollable = overflowY === 'auto' || overflowY === 'scroll';
+                    const hasScrollableArea = node.scrollHeight > node.clientHeight + 80;
+                    const hasMessages = !!node.querySelector('[data-message-author-role], article');
+                    return isScrollable && hasScrollableArea && hasMessages;
+                });
+                const target = candidates.sort((a, b) => b.scrollHeight - a.scrollHeight)[0];
+                if (target) {
+                    target.scrollTop = 0;
+                    return;
+                }
+                window.scrollTo(0, 0);
+            }"""
+        )
+        page.wait_for_timeout(700)
+
+    return previous_count
+
+
+def dismiss_chatgpt_obstructive_dialogs(page, max_rounds: int = 3) -> List[Dict[str, str]]:
+    dismiss_terms = ["got it", "ok", "okay", "close", "dismiss", "continue", "知道了", "关闭", "确认"]
+    dismissed: List[Dict[str, str]] = []
+
+    for _ in range(max_rounds):
+        dialog_locator = page.locator("[role='dialog']")
+        if dialog_locator.count() == 0:
+            break
+
+        dismissed_this_round = False
+        dialog = dialog_locator.nth(dialog_locator.count() - 1)
+        control = find_visible_chatgpt_control(
+            dialog,
+            include_terms=dismiss_terms,
+            selectors=["button", "[role='button']"],
+            max_candidates=24,
+        )
+        if control is not None:
+            safe_click(control["locator"], timeout=3000, reason="dismiss_dialog")
+            page.wait_for_timeout(800)
+            dismissed.append({"label": control.get("label") or "dismiss"})
+            dismissed_this_round = True
+
+        if not dismissed_this_round:
+            break
+
+    return dismissed
+
+
+def is_retryable_chatgpt_guard_signal(guard_signal: Optional[Dict[str, str]]) -> bool:
+    if not guard_signal:
+        return False
+    signal = clean_text(guard_signal.get("signal") or "").lower()
+    retryable_terms = [
+        "too many requests",
+        "making requests too quickly",
+        "temporarily limited access to your conversations",
+    ]
+    return any(term in signal for term in retryable_terms)
+
+
+def recover_chatgpt_retryable_guard(page, guard_signal: Dict[str, str]) -> Dict[str, Any]:
+    dismissed = dismiss_chatgpt_obstructive_dialogs(page, max_rounds=2)
+    cooldown_seconds = get_chatgpt_guard_cooldown_seconds()
+    time.sleep(cooldown_seconds)
+    dismiss_chatgpt_obstructive_dialogs(page, max_rounds=1)
+    return {
+        "signal": clean_text(guard_signal.get("signal") or ""),
+        "dismissed": dismissed,
+        "cooldown_seconds": cooldown_seconds,
+    }
+
+
+def safe_click(locator, timeout: int = 3000, reason: str = "") -> str:
+    try:
+        try:
+            locator.scroll_into_view_if_needed(timeout=min(timeout, 1200))
+        except Exception:
+            pass
+        locator.click(timeout=timeout)
+        return "normal"
+    except Exception as exc:
+        error_text = str(exc).lower()
+        if any(token in error_text for token in ["intercepts pointer events", "another element", "subtree intercepts", "not clickable"]):
+            try:
+                locator.click(timeout=max(timeout, 1000), force=True)
+                return "force"
+            except Exception:
+                pass
+            try:
+                locator.evaluate("(node) => node.click()")
+                return "js"
+            except Exception:
+                pass
+        raise
+
+
+def inject_chatgpt_reduce_motion_styles(page) -> None:
+    try:
+        page.evaluate(
+            """() => {
+                const id = 'codex-chatgpt-low-motion-style';
+                if (document.getElementById(id)) {
+                    return;
+                }
+                const style = document.createElement('style');
+                style.id = id;
+                style.textContent = `
+                    html { scroll-behavior: auto !important; }
+                    *, *::before, *::after {
+                        animation-duration: 0s !important;
+                        animation-delay: 0s !important;
+                        transition-duration: 0s !important;
+                        transition-delay: 0s !important;
+                        scroll-behavior: auto !important;
+                        caret-color: auto !important;
+                    }
+                    ::view-transition-old(root), ::view-transition-new(root) {
+                        animation: none !important;
+                    }
+                `;
+                document.head.appendChild(style);
+            }"""
+        )
+    except Exception:
+        pass
+
+
+def hide_chatgpt_interfering_overlays(page) -> List[str]:
+    try:
+        hidden = page.evaluate(
+            """() => {
+                const labels = [];
+                const explicitSelectors = [
+                    '[data-keep-ai-memory-tag]',
+                    '.keep-ai-memory-float',
+                    '#pdfcrowd-convert-main',
+                    '[id*="pdfcrowd"]',
+                    '[class*="pdfcrowd"]',
+                ];
+                for (const selector of explicitSelectors) {
+                    for (const node of document.querySelectorAll(selector)) {
+                        node.style.setProperty('display', 'none', 'important');
+                        node.setAttribute('data-codex-hidden-overlay', 'true');
+                        labels.push(selector);
+                    }
+                }
+
+                const textNeedles = [
+                    'apply auto hide',
+                    'export to pdf',
+                    'screenshot reply',
+                    'toggle latex mode',
+                    'open settings',
+                    '自动记忆',
+                    'save as pdf'
+                ];
+
+                for (const node of document.body.querySelectorAll('*')) {
+                    const style = window.getComputedStyle(node);
+                    const isFloating = ['fixed', 'sticky'].includes(style.position) || Number(style.zIndex || 0) >= 999;
+                    if (!isFloating) {
+                        continue;
+                    }
+                    const text = [node.getAttribute('aria-label') || '', node.getAttribute('title') || '', node.innerText || '']
+                        .join(' ')
+                        .replace(/\\s+/g, ' ')
+                        .trim()
+                        .toLowerCase();
+                    if (!text) {
+                        continue;
+                    }
+                    if (!textNeedles.some(term => text.includes(term))) {
+                        continue;
+                    }
+                    node.style.setProperty('display', 'none', 'important');
+                    node.setAttribute('data-codex-hidden-overlay', 'true');
+                    labels.push(text.slice(0, 120));
+                }
+                return labels;
+            }"""
+        )
+        return [clean_text(item) for item in (hidden or []) if clean_text(item)]
+    except Exception:
+        return []
+
+
+def prepare_chatgpt_page(page) -> Dict[str, Any]:
+    inject_chatgpt_reduce_motion_styles(page)
+    hidden = hide_chatgpt_interfering_overlays(page)
+    dismissed = dismiss_chatgpt_obstructive_dialogs(page, max_rounds=1)
+    return {
+        "hidden_overlays": dedupe_strings(hidden),
+        "dismissed_dialogs": dismissed,
+    }
+
+
+def current_chatgpt_input_locator(page):
+    prepare_chatgpt_page(page)
+    selectors = [
+        'textarea',
+        'form textarea',
+        'div[contenteditable="true"][role="textbox"]',
+        'div[contenteditable="true"]',
+    ]
+    for selector in selectors:
+        locator = page.locator(selector)
+        if locator.count() > 0:
+            for index in range(locator.count()):
+                candidate = locator.nth(index)
+                try:
+                    if candidate.is_visible(timeout=800):
+                        return candidate
+                except Exception:
+                    continue
+    raise RuntimeError("Unable to find the ChatGPT prompt input box.")
+
+
+def click_chatgpt_new_chat(page) -> None:
+    current_url = page.url or ""
+    if get_url_host(current_url) not in CHATGPT_HOSTS:
+        throttle_chatgpt_request("browse", "goto_chatgpt_home_for_new_chat")
+        page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=120000)
+        page.wait_for_timeout(1200)
+        prepare_chatgpt_page(page)
+
+    selectors = [
+        'a[href="/"]',
+        'button[aria-label*="New chat" i]',
+        'button[data-testid*="new-chat"]',
+        'a[data-testid*="new-chat"]',
+    ]
+    for selector in selectors:
+        locator = page.locator(selector)
+        if locator.count() == 0:
+            continue
+        try:
+            throttle_chatgpt_request("browse", f"new_chat_click:{selector}")
+            safe_click(locator.first, timeout=3000, reason=f"new_chat:{selector}")
+            page.wait_for_timeout(1200)
+            current_chatgpt_input_locator(page)
+            return
+        except Exception:
+            continue
+
+    throttle_chatgpt_request("browse", "goto_chatgpt_home_fallback")
+    page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=120000)
+    page.wait_for_timeout(1500)
+    prepare_chatgpt_page(page)
+    current_chatgpt_input_locator(page)
+
+
+def open_chatgpt_target(
+    page,
+    url: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+    title_contains: Optional[str] = None,
+    new_chat: bool = False,
+) -> Dict[str, Any]:
+    target_url = url or page.url or "https://chatgpt.com/"
+    if get_url_host(target_url) not in CHATGPT_HOSTS:
+        target_url = "https://chatgpt.com/"
+
+    throttle_chatgpt_request("browse", f"open_target:{target_url}")
+    page.goto(target_url, wait_until="domcontentloaded", timeout=120000)
+    page.wait_for_timeout(1200)
+
+    host = get_url_host(page.url)
+    if host not in CHATGPT_HOSTS:
+        raise RuntimeError(f"The current page is not ChatGPT: {page.url}")
+    if "/auth/" in page.url or "/login" in page.url:
+        raise RuntimeError("ChatGPT does not appear to be logged in in this browser profile.")
+    prepare_chatgpt_page(page)
+
+    if new_chat:
+        click_chatgpt_new_chat(page)
+        return {"mode": "new_chat", "url": page.url, "conversation_id": conversation_id_from_url(page.url)}
+
+    if conversation_id or title_contains:
+        ensure_chatgpt_sidebar_visible(page)
+        load_all_chatgpt_sidebar_items(page)
+        entries = extract_chatgpt_sidebar_entries(page)
+        chosen = find_chatgpt_sidebar_entry(entries, conversation_id=conversation_id, title_contains=title_contains)
+        throttle_chatgpt_request("browse", f"open_existing_chat:{chosen.get('conversation_id') or chosen.get('title') or 'chat'}")
+        page.goto(chosen["href"], wait_until="domcontentloaded", timeout=120000)
+        wait_for_chatgpt_conversation(page)
+        return {
+            "mode": "existing_chat",
+            "url": page.url,
+            "conversation_id": chosen.get("conversation_id") or conversation_id_from_url(page.url),
+            "title": chosen.get("title") or "",
+        }
+
+    if "/c/" in (page.url or ""):
+        wait_for_chatgpt_conversation(page)
+        return {"mode": "current_chat", "url": page.url, "conversation_id": conversation_id_from_url(page.url)}
+
+    current_chatgpt_input_locator(page)
+    return {"mode": "current_page", "url": page.url, "conversation_id": conversation_id_from_url(page.url)}
+
+
+def get_chatgpt_control_label(locator) -> str:
+    parts: List[str] = []
+    for getter in [
+        lambda item: item.get_attribute("aria-label") or "",
+        lambda item: item.get_attribute("title") or "",
+        lambda item: item.inner_text(timeout=800) or "",
+    ]:
+        try:
+            value = getter(locator)
+        except Exception:
+            value = ""
+        if value:
+            parts.append(value)
+    return clean_text(" ".join(parts))
+
+
+def find_visible_chatgpt_control(
+    root,
+    include_terms: List[str],
+    selectors: Optional[List[str]] = None,
+    exclude_terms: Optional[List[str]] = None,
+    max_candidates: int = 40,
+) -> Optional[Dict[str, Any]]:
+    selectors = selectors or ["button", "[role='button']", "[role='menuitem']"]
+    include_lc = [clean_text(term).lower() for term in include_terms if clean_text(term)]
+    exclude_lc = [clean_text(term).lower() for term in (exclude_terms or []) if clean_text(term)]
+
+    for selector in selectors:
+        locator = root.locator(selector)
+        count = min(locator.count(), max_candidates)
+        for index in range(count):
+            candidate = locator.nth(index)
+            try:
+                if not candidate.is_visible(timeout=250):
+                    continue
+            except Exception:
+                continue
+
+            label = get_chatgpt_control_label(candidate).lower()
+            if not label:
+                continue
+            if exclude_lc and any(term in label for term in exclude_lc):
+                continue
+            if any(term in label for term in include_lc):
+                return {
+                    "selector": selector,
+                    "index": index,
+                    "label": label,
+                    "locator": candidate,
+                }
+    return None
+
+
+def open_chatgpt_actions_menu(page) -> Dict[str, Any]:
+    prepare_chatgpt_page(page)
+    menu_selectors = [
+        "main button[aria-haspopup='menu']",
+        "header button[aria-haspopup='menu']",
+        "button[data-testid*='conversation']",
+        "button[data-testid*='action']",
+        "button[data-testid*='more']",
+        "button[aria-label*='More' i]",
+        "button[aria-label*='options' i]",
+        "button[aria-label*='menu' i]",
+        "button[title*='More' i]",
+    ]
+    exclude_terms = [
+        "account", "profile", "settings", "customize", "memory", "voice", "search", "sidebar",
+        "history", "workspace", "upgrade", "share", "temporary", "model", "project",
+    ]
+
+    for selector in menu_selectors:
+        locator = page.locator(selector)
+        count = min(locator.count(), 24)
+        for index in range(count):
+            candidate = locator.nth(index)
+            try:
+                if not candidate.is_visible(timeout=250):
+                    continue
+            except Exception:
+                continue
+
+            label = get_chatgpt_control_label(candidate).lower()
+            if label and any(term in label for term in exclude_terms):
+                continue
+
+            try:
+                candidate.scroll_into_view_if_needed(timeout=800)
+            except Exception:
+                pass
+
+            try:
+                safe_click(candidate, timeout=2500, reason=f"actions_menu:{selector}")
+                page.wait_for_timeout(700)
+            except Exception:
+                continue
+
+            delete_control = find_visible_chatgpt_control(
+                page,
+                include_terms=["delete", "删除"],
+                selectors=["[role='menuitem']", "button", "[role='button']"],
+                exclude_terms=["delete all", "delete workspace"],
+            )
+            if delete_control is not None:
+                return {
+                    "selector": selector,
+                    "index": index,
+                    "label": label,
+                }
+
+            try:
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(250)
+            except Exception:
+                pass
+
+    raise RuntimeError("Unable to open a ChatGPT conversation actions menu that exposes Delete.")
+
+
+def confirm_chatgpt_delete_dialog(page, timeout_seconds: int = 8) -> Dict[str, Any]:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        dialog_locator = page.locator("[role='dialog']")
+        dialog_count = dialog_locator.count()
+        if dialog_count > 0:
+            dialog = dialog_locator.nth(dialog_count - 1)
+            try:
+                if dialog.is_visible(timeout=250):
+                    confirm = find_visible_chatgpt_control(
+                        dialog,
+                        include_terms=["delete", "删除"],
+                        selectors=["button", "[role='button']"],
+                        exclude_terms=["delete all", "delete workspace"],
+                        max_candidates=24,
+                    )
+                    if confirm is not None:
+                        throttle_chatgpt_request("mutation", "confirm_delete")
+                        safe_click(confirm["locator"], timeout=3000, reason="confirm_delete")
+                        page.wait_for_timeout(1000)
+                        return {"status": "confirmed", "label": confirm["label"]}
+            except Exception:
+                pass
+        time.sleep(0.35)
+
+    return {"status": "not_required"}
+
+
+def wait_for_chatgpt_deletion(page, expected_conversation_id: str = "", timeout_seconds: int = 20) -> Dict[str, Any]:
+    expected_id = clean_text(expected_conversation_id)
+    deadline = time.time() + timeout_seconds
+
+    while time.time() < deadline:
+        current_url = page.url or ""
+        if not expected_id and "/c/" not in current_url:
+            return {"url": current_url, "removed_from_sidebar": None}
+
+        try:
+            ensure_chatgpt_sidebar_visible(page)
+            entries = extract_chatgpt_sidebar_entries(page)
+            if expected_id:
+                still_present = any(clean_text(entry.get("conversation_id") or "") == expected_id for entry in entries)
+                if not still_present:
+                    return {"url": current_url, "removed_from_sidebar": True}
+                if expected_id not in current_url:
+                    return {"url": current_url, "removed_from_sidebar": False}
+        except Exception:
+            if expected_id and expected_id not in current_url:
+                return {"url": current_url, "removed_from_sidebar": None}
+
+        page.wait_for_timeout(700)
+
+    raise RuntimeError("Timed out waiting for ChatGPT conversation deletion to complete.")
+
+
+def delete_current_chatgpt_conversation(page, expected_conversation_id: str = "") -> Dict[str, Any]:
+    api_error = ""
+    if clean_text(expected_conversation_id):
+        try:
+            api_delete = delete_chatgpt_conversation_via_api(page, expected_conversation_id)
+            throttle_chatgpt_request("browse", "post_delete_refresh")
+            page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=120000)
+            page.wait_for_timeout(1200)
+            prepare_chatgpt_page(page)
+            completion = wait_for_chatgpt_deletion(page, expected_conversation_id=expected_conversation_id, timeout_seconds=20)
+            return {
+                "strategy": "api_primary",
+                "api_delete": api_delete,
+                "completion": completion,
+            }
+        except Exception as exc:
+            api_error = f"{type(exc).__name__}: {exc}"
+
+    ui_error = ""
+    try:
+        delete_control = find_visible_chatgpt_control(
+            page,
+            include_terms=["delete", "删除"],
+            selectors=["[role='menuitem']", "button", "[role='button']"],
+            exclude_terms=["delete all", "delete workspace"],
+        )
+        if delete_control is None:
+            menu_info = open_chatgpt_actions_menu(page)
+            delete_control = find_visible_chatgpt_control(
+                page,
+                include_terms=["delete", "删除"],
+                selectors=["[role='menuitem']", "button", "[role='button']"],
+                exclude_terms=["delete all", "delete workspace"],
+            )
+        else:
+            menu_info = {"selector": "direct", "index": 0, "label": delete_control.get("label") or ""}
+
+        if delete_control is None:
+            raise RuntimeError("Unable to find a Delete action for the current ChatGPT conversation.")
+
+        safe_click(delete_control["locator"], timeout=3000, reason="delete_current_chat")
+        page.wait_for_timeout(800)
+        confirmation = confirm_chatgpt_delete_dialog(page)
+        completion = wait_for_chatgpt_deletion(page, expected_conversation_id=expected_conversation_id, timeout_seconds=20)
+        return {
+            "strategy": "ui",
+            "api_error": api_error,
+            "menu": menu_info,
+            "delete_action": {
+                "selector": delete_control.get("selector"),
+                "index": delete_control.get("index"),
+                "label": delete_control.get("label"),
+            },
+            "confirmation": confirmation,
+            "completion": completion,
+        }
+    except Exception as exc:
+        ui_error = f"{type(exc).__name__}: {exc}"
+
+    raise RuntimeError(ui_error or api_error or "Unable to delete the current ChatGPT conversation.")
+
+
+def set_chatgpt_prompt_text(page, prompt: str) -> None:
+    locator = current_chatgpt_input_locator(page)
+    tag_name = (locator.evaluate("(node) => node.tagName.toLowerCase()") or "").lower()
+    safe_click(locator, timeout=3000, reason="focus_prompt")
+    if tag_name == "textarea":
+        locator.fill(prompt, timeout=6000)
+        return
+
+    page.keyboard.press("Control+A")
+    page.keyboard.press("Backspace")
+    page.keyboard.insert_text(prompt)
+
+
+def upload_chatgpt_files(page, paths: List[str]) -> List[str]:
+    if not paths:
+        return []
+
+    resolved_paths = []
+    for raw_path in paths:
+        resolved = str(Path(raw_path).expanduser().resolve())
+        if not Path(resolved).exists():
+            raise RuntimeError(f"Attachment path not found: {raw_path}")
+        resolved_paths.append(resolved)
+
+    file_input = page.locator('input[type="file"]')
+    if file_input.count() == 0:
+        add_selectors = [
+            'button[aria-label*="Add photos" i]',
+            'button[aria-label*="Add files" i]',
+            'button[aria-label*="Add photos and files" i]',
+            'button[data-testid*="add-file"]',
+        ]
+        for selector in add_selectors:
+            locator = page.locator(selector)
+            if locator.count() == 0:
+                continue
+            try:
+                safe_click(locator.first, timeout=2000, reason=f"open_upload:{selector}")
+                page.wait_for_timeout(700)
+                break
+            except Exception:
+                continue
+        file_input = page.locator('input[type="file"]')
+
+    if file_input.count() == 0:
+        raise RuntimeError("Unable to find ChatGPT file upload input.")
+
+    file_input.first.set_input_files(resolved_paths)
+    page.wait_for_timeout(2000)
+    return resolved_paths
+
+
+def chatgpt_send_prompt(page) -> None:
+    throttle_chatgpt_request("mutation", "send_prompt")
+    button_selectors = [
+        'button[aria-label*="Send prompt" i]',
+        'button[aria-label*="Send message" i]',
+        'button[data-testid*="send"]',
+    ]
+    for selector in button_selectors:
+        locator = page.locator(selector)
+        if locator.count() == 0:
+            continue
+        try:
+            safe_click(locator.first, timeout=2500, reason=f"send_prompt:{selector}")
+            return
+        except Exception:
+            continue
+
+    page.keyboard.press("Enter")
+
+
+def latest_assistant_message(conversation: Dict[str, Any]) -> Dict[str, Any]:
+    assistant_messages = [message for message in conversation.get("messages", []) if clean_text(message.get("role") or "").lower() == "assistant"]
+    if assistant_messages:
+        return assistant_messages[-1]
+    if conversation.get("messages"):
+        return conversation["messages"][-1]
+    return {"index": 0, "role": "assistant", "text": "", "code_blocks": []}
+
+
+def wait_for_chatgpt_answer(page, before_conversation: Dict[str, Any], timeout_seconds: int = 300) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    deadline = time.time() + timeout_seconds
+    before_last = latest_assistant_message(before_conversation)
+    before_text = before_last.get("text") or ""
+    before_assistant_count = len(
+        [message for message in before_conversation.get("messages", []) if clean_text(message.get("role") or "").lower() == "assistant"]
+    )
+    stable_rounds = 0
+    answer_started = False
+    previous_text = before_text
+    retryable_guard_count = 0
+
+    while time.time() < deadline:
+        dismiss_chatgpt_obstructive_dialogs(page, max_rounds=1)
+        guard_signal = detect_chatgpt_guard_signal(page)
+        if guard_signal:
+            if is_retryable_chatgpt_guard_signal(guard_signal) and retryable_guard_count < 3:
+                recover_chatgpt_retryable_guard(page, guard_signal)
+                retryable_guard_count += 1
+                continue
+            raise RuntimeError(f"ChatGPT guard detected while waiting for a response: {guard_signal['signal']}")
+
+        conversation = extract_chatgpt_conversation_payload(page)
+        last_assistant = latest_assistant_message(conversation)
+        assistant_messages = [
+            message for message in conversation.get("messages", []) if clean_text(message.get("role") or "").lower() == "assistant"
+        ]
+        current_count = len(assistant_messages)
+        current_text = last_assistant.get("text") or ""
+        if current_count > before_assistant_count or current_text != before_text:
+            answer_started = True
+
+        stop_visible = False
+        for selector in ['button[aria-label*="Stop" i]', 'button:has-text("Stop generating")', 'button:has-text("Stop")']:
+            locator = page.locator(selector)
+            try:
+                if locator.count() > 0 and locator.first.is_visible(timeout=300):
+                    stop_visible = True
+                    break
+            except Exception:
+                continue
+
+        if answer_started:
+            if current_text and current_text == previous_text and not stop_visible:
+                stable_rounds += 1
+            else:
+                stable_rounds = 0
+
+            if stable_rounds >= 2 and current_text:
+                return conversation, last_assistant
+
+        previous_text = current_text
+        time.sleep(1.2)
+
+    raise RuntimeError("Timed out while waiting for ChatGPT to finish responding.")
+
+
+def build_requests_session_from_context(context, page) -> requests.Session:
+    session = requests.Session()
+    try:
+        cookies = context.cookies()
+    except Exception:
+        cookies = []
+    for cookie in cookies:
+        session.cookies.set(
+            cookie.get("name"),
+            cookie.get("value"),
+            domain=cookie.get("domain"),
+            path=cookie.get("path") or "/",
+        )
+    try:
+        user_agent = page.evaluate("() => navigator.userAgent")
+    except Exception:
+        user_agent = ""
+    if user_agent:
+        session.headers.update({"User-Agent": user_agent})
+    return session
+
+
+def is_probable_chatgpt_file_link(href: str, text: str = "", download_name: str = "") -> bool:
+    href_lc = (href or "").lower()
+    path = get_url_path(href_lc)
+    if is_probable_file_link(href, text or download_name):
+        return True
+    if "/files/" in path or "/backend-api/" in path or "download=true" in href_lc:
+        return True
+    if download_name:
+        _, ext = os.path.splitext(download_name.lower())
+        if ext in COMMON_FILE_EXTENSIONS:
+            return True
+    return False
+
+
+def collect_chatgpt_message_file_targets(page) -> Dict[str, Any]:
+    assistant_locator = page.locator('[data-message-author-role="assistant"]').last
+    anchors = []
+    try:
+        anchor_locator = assistant_locator.locator('a[href]')
+        for index in range(anchor_locator.count()):
+            anchor = anchor_locator.nth(index)
+            href = anchor.get_attribute("href") or ""
+            text = clean_text(anchor.inner_text(timeout=1000) if anchor.count() >= 0 else "")
+            download_name = clean_text(anchor.get_attribute("download") or "")
+            if not href:
+                continue
+            if href.startswith("blob:"):
+                continue
+            if not is_probable_chatgpt_file_link(href, text=text, download_name=download_name):
+                continue
+            anchors.append(
+                {
+                    "href": href,
+                    "text": text,
+                    "download_name": download_name,
+                }
+            )
+    except Exception:
+        anchors = []
+
+    buttons = []
+    try:
+        button_locator = assistant_locator.locator('button')
+        for index in range(button_locator.count()):
+            button = button_locator.nth(index)
+            label = clean_text(
+                (button.get_attribute("aria-label") or "")
+                + " "
+                + (button.inner_text(timeout=1000) or "")
+                + " "
+                + (button.get_attribute("title") or "")
+            )
+            if "download" not in label.lower():
+                continue
+            buttons.append({"index": index, "label": label or f"download_{index + 1}"})
+    except Exception:
+        buttons = []
+
+    return {"anchors": dedupe_dicts(anchors), "buttons": buttons}
+
+
+def get_chatgpt_access_token(page) -> str:
+    token = page.evaluate(
+        """async () => {
+            const response = await fetch('/api/auth/session', { credentials: 'include' });
+            if (!response.ok) {
+                return '';
+            }
+            const payload = await response.json();
+            return payload.accessToken || '';
+        }"""
+    )
+    token = clean_text(token)
+    if not token:
+        raise RuntimeError("Unable to obtain a ChatGPT access token from the current logged-in session.")
+    return token
+
+
+def normalize_chatgpt_message_text(value: str) -> str:
+    text = (value or "").replace("\r", "")
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def flatten_chatgpt_content_fragment(fragment: Any) -> List[str]:
+    if fragment is None:
+        return []
+    if isinstance(fragment, str):
+        text = normalize_chatgpt_message_text(fragment)
+        return [text] if text else []
+    if isinstance(fragment, list):
+        results: List[str] = []
+        for item in fragment:
+            results.extend(flatten_chatgpt_content_fragment(item))
+        return results
+    if isinstance(fragment, dict):
+        results: List[str] = []
+        for key in ["text", "parts", "content", "value", "result", "caption", "title"]:
+            if key in fragment:
+                results.extend(flatten_chatgpt_content_fragment(fragment.get(key)))
+        return results
+    text = normalize_chatgpt_message_text(str(fragment))
+    return [text] if text else []
+
+
+def extract_chatgpt_text_from_message(message: Dict[str, Any]) -> str:
+    content = message.get("content") or {}
+    fragments = flatten_chatgpt_content_fragment(content.get("parts") if isinstance(content, dict) else content)
+    text = "\n\n".join([item for item in fragments if item])
+    return normalize_chatgpt_message_text(text)
+
+
+def fetch_chatgpt_conversation_api_payload(page, conversation_id: str) -> Dict[str, Any]:
+    if not clean_text(conversation_id) or clean_text(conversation_id) == "untitled":
+        raise RuntimeError("A persisted ChatGPT conversation id is required for API conversation fetch.")
+
+    throttle_chatgpt_request("browse", f"api_fetch:{conversation_id}")
+    token = get_chatgpt_access_token(page)
+    result = page.evaluate(
+        """async ({conversationId, token}) => {
+            const response = await fetch(`https://chatgpt.com/backend-api/conversation/${conversationId}`, {
+                method: 'GET',
+                credentials: 'include',
+                headers: {
+                    'Accept': 'application/json, text/plain, */*',
+                    'Authorization': `Bearer ${token}`,
+                },
+            });
+            const text = await response.text();
+            if (!response.ok) {
+                return {
+                    status: response.status,
+                    ok: false,
+                    text: text.slice(0, 1000),
+                };
+            }
+            return {
+                status: response.status,
+                ok: true,
+                json: JSON.parse(text),
+            };
+        }""",
+        {"conversationId": conversation_id, "token": token},
+    )
+    if not result.get("ok"):
+        raise RuntimeError(
+            f"ChatGPT API conversation fetch failed with status {result.get('status')}: {(result.get('text') or '')[:240]}"
+        )
+    return result.get("json") or {}
+
+
+def build_chatgpt_conversation_from_api_payload(raw_payload: Dict[str, Any], conversation_id: str, fallback_url: str = "") -> Dict[str, Any]:
+    mapping = raw_payload.get("mapping") or {}
+    current_node = raw_payload.get("current_node")
+    if not current_node:
+        leaf_candidates = []
+        for node_id, node in mapping.items():
+            if not (node or {}).get("children"):
+                leaf_candidates.append(node_id)
+        if leaf_candidates:
+            current_node = leaf_candidates[-1]
+
+    ordered_ids: List[str] = []
+    seen = set()
+    node_id = current_node
+    while node_id and node_id not in seen:
+        seen.add(node_id)
+        ordered_ids.append(node_id)
+        node = mapping.get(node_id) or {}
+        node_id = node.get("parent")
+    ordered_ids.reverse()
+
+    messages: List[Dict[str, Any]] = []
+    for ordinal, node_id in enumerate(ordered_ids, start=1):
+        node = mapping.get(node_id) or {}
+        message = node.get("message") or {}
+        metadata = message.get("metadata") or {}
+        role = clean_text(((message.get("author") or {}).get("role")) or "")
+        if metadata.get("is_visually_hidden_from_conversation"):
+            continue
+        if role in {"", "system"}:
+            continue
+        text = extract_chatgpt_text_from_message(message)
+        if not text:
+            continue
+        messages.append(
+            {
+                "index": len(messages) + 1,
+                "role": role,
+                "text": text,
+                "code_blocks": [],
+            }
+        )
+
+    title = clean_text(raw_payload.get("title") or "") or conversation_id or "conversation"
+    url = fallback_url or (f"https://chatgpt.com/c/{conversation_id}" if conversation_id else "")
+    return {
+        "title": title,
+        "url": url,
+        "message_count": len(messages),
+        "messages": messages,
+        "conversation_id": conversation_id,
+        "capture_source": "api",
+    }
+
+
+def delete_chatgpt_conversation_via_api(page, conversation_id: str) -> Dict[str, Any]:
+    if not clean_text(conversation_id):
+        raise RuntimeError("A conversation id is required for the API delete fallback.")
+
+    throttle_chatgpt_request("mutation", f"api_delete:{conversation_id}")
+    token = get_chatgpt_access_token(page)
+    result = page.evaluate(
+        """async ({conversationId, token}) => {
+            const response = await fetch(`https://chatgpt.com/backend-api/conversation/${conversationId}`, {
+                method: 'PATCH',
+                credentials: 'include',
+                headers: {
+                    'Accept': 'application/json, text/plain, */*',
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`,
+                },
+                body: JSON.stringify({ is_visible: false }),
+            });
+            const text = await response.text();
+            return {
+                status: response.status,
+                text: text.slice(0, 1000),
+            };
+        }""",
+        {"conversationId": conversation_id, "token": token},
+    )
+    status = int(result.get("status") or 0)
+    response_text = result.get("text") or ""
+    if status not in {200, 404}:
+        raise RuntimeError(f"ChatGPT API delete fallback failed with status {status}: {response_text[:240]}")
+    return {
+        "status": status,
+        "response_excerpt": response_text[:240],
+    }
+
+
+def download_chatgpt_message_files(page, destination_dir: Path, base_name: str) -> List[Dict[str, Any]]:
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    context = page.context
+    session = build_requests_session_from_context(context, page)
+    targets = collect_chatgpt_message_file_targets(page)
+    results: List[Dict[str, Any]] = []
+
+    for index, anchor in enumerate(targets.get("anchors", []), start=1):
+        href = anchor.get("href") or ""
+        if not href.startswith(("http://", "https://")):
+            continue
+        fallback_name = anchor.get("download_name") or anchor.get("text") or f"{base_name}_{index}"
+        target_path = build_output_path(str(destination_dir), None, fallback_name, fallback_name)
+        try:
+            ensure_parent(target_path)
+            with session.get(href, stream=True, timeout=180) as response:
+                response.raise_for_status()
+                output_name = filename_from_response(href, dict(response.headers), fallback_name)
+                target_path = build_output_path(str(destination_dir), None, output_name, output_name)
+                ensure_parent(target_path)
+                with target_path.open("wb") as handle:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            handle.write(chunk)
+            results.append({"status": "downloaded", "path": str(target_path), "url": href})
+        except Exception as exc:
+            results.append({"status": "error", "url": href, "error": f"{type(exc).__name__}: {exc}"})
+
+    try:
+        assistant_locator = page.locator('[data-message-author-role="assistant"]').last
+        button_locator = assistant_locator.locator('button')
+        for button_target in targets.get("buttons", []):
+            button = button_locator.nth(int(button_target.get("index", 0)))
+            label = button_target.get("label") or "download"
+            target_path = build_output_path(str(destination_dir), None, sanitize(label), sanitize(label))
+            try:
+                with page.expect_download(timeout=30000) as download_info:
+                    safe_click(button, timeout=3000, reason="assistant_file_download")
+                download = download_info.value
+                suggested = sanitize(download.suggested_filename or target_path.name)
+                target_path = build_output_path(str(destination_dir), None, suggested, suggested)
+                download.save_as(str(target_path))
+                results.append({"status": "downloaded", "path": str(target_path), "label": label})
+            except Exception as exc:
+                results.append({"status": "error", "label": label, "error": f"{type(exc).__name__}: {exc}"})
+    except Exception:
+        pass
+
+    return results
+
+
+def wait_for_chatgpt_conversation(page) -> None:
+    prepare_chatgpt_page(page)
+    selectors = ['[data-message-author-role]', 'main article', 'main']
+    for selector in selectors:
+        try:
+            page.wait_for_selector(selector, timeout=12000)
+            break
+        except Exception:
+            continue
+    page.wait_for_timeout(1200)
+
+
+def extract_chatgpt_conversation_payload(page) -> Dict[str, Any]:
+    payload = page.evaluate(
+        """() => {
+            const clean = value => (value || '')
+                .replace(/\\r/g, '')
+                .replace(/[ \\t]+\\n/g, '\\n')
+                .replace(/\\n{3,}/g, '\\n\\n')
+                .trim();
+
+            const titleFromDoc = clean((document.title || '').replace(/\\s*\\|\\s*ChatGPT.*$/i, ''));
+            const heading = document.querySelector('main h1');
+            const title = clean((heading && heading.innerText) || titleFromDoc || 'conversation');
+
+            let nodes = [...document.querySelectorAll('[data-message-author-role]')];
+            let messages = nodes.map((node, index) => {
+                const role = clean(node.getAttribute('data-message-author-role') || '');
+                const text = clean(node.innerText || node.textContent || '');
+                const codeBlocks = [...node.querySelectorAll('pre code')].map(code => clean(code.innerText || code.textContent || '')).filter(Boolean);
+                return {
+                    index: index + 1,
+                    role: role || (index % 2 === 0 ? 'user' : 'assistant'),
+                    text,
+                    code_blocks: codeBlocks
+                };
+            }).filter(message => message.text);
+
+            if (!messages.length) {
+                const articles = [...document.querySelectorAll('main article')];
+                messages = articles.map((article, index) => ({
+                    index: index + 1,
+                    role: index % 2 === 0 ? 'user' : 'assistant',
+                    text: clean(article.innerText || article.textContent || ''),
+                    code_blocks: [...article.querySelectorAll('pre code')].map(code => clean(code.innerText || code.textContent || '')).filter(Boolean)
+                })).filter(message => message.text);
+            }
+
+            return {
+                title,
+                url: location.href,
+                message_count: messages.length,
+                messages
+            };
+        }"""
+    )
+    payload["title"] = clean_text(payload.get("title") or "")
+    payload["url"] = payload.get("url") or page.url
+    payload["capture_source"] = "dom"
+    return payload
+
+
+def classify_chatgpt_topic_match(
+    conversation: Dict[str, Any],
+    keywords: Optional[List[str]] = None,
+    topic_label: str = "topic",
+) -> Dict[str, Any]:
+    keyword_list = normalize_keyword_list(keywords)
+    parts = [conversation.get("title", "")]
+    for message in conversation.get("messages", [])[:12]:
+        text = message.get("text", "")
+        if text:
+            parts.append(text[:2400])
+    haystack = "\n".join(parts)
+    haystack_lc = haystack.lower()
+
+    matched = []
+    for keyword in keyword_list:
+        if keyword.lower() in haystack_lc:
+            matched.append(keyword)
+
+    if re.search(r"\b[A-Z]{4}\d{4}\b", haystack):
+        matched.append("course_code")
+
+    matched = dedupe_strings(matched)
+    topic_match = bool(matched)
+    return {
+        "topic_label": clean_text(topic_label) or "topic",
+        "topic_match": topic_match,
+        "matched_keywords": matched,
+        "keyword_count": len(matched),
+        "learning_related": topic_match,
+    }
+
+
+def chatgpt_conversation_markdown(conversation: Dict[str, Any]) -> str:
+    lines = [f"# {conversation.get('title') or 'conversation'}", ""]
+    lines.append(f"- URL: {conversation.get('url') or ''}")
+    lines.append(f"- Topic label: {conversation.get('topic_label') or 'topic'}")
+    lines.append(f"- Topic matched: {'yes' if conversation.get('topic_match') else 'no'}")
+    lines.append(f"- Matched keywords: {', '.join(conversation.get('matched_keywords') or [])}")
+    lines.append("")
+
+    for message in conversation.get("messages", []):
+        role = clean_text(message.get("role") or "message").title()
+        lines.append(f"## {role}")
+        lines.append("")
+        lines.append(message.get("text") or "")
+        lines.append("")
+
+    return "\n".join(lines).strip() + "\n"
+
+
+def save_chatgpt_conversation_bundle(page, destination_dir: Path, conversation: Dict[str, Any], ordinal: int) -> Dict[str, str]:
+    bundle_name = sanitize(f"{ordinal:03d}_{conversation.get('title') or conversation.get('conversation_id') or 'conversation'}")
+    bundle_dir = destination_dir / bundle_name
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+
+    html_path = bundle_dir / "conversation.html"
+    json_path = bundle_dir / "conversation.json"
+    md_path = bundle_dir / "conversation.md"
+
+    save_html(page, html_path)
+    write_text(json_path, json.dumps(conversation, indent=2, ensure_ascii=False))
+    write_text(md_path, chatgpt_conversation_markdown(conversation))
+
+    return {
+        "bundle_dir": str(bundle_dir),
+        "html_path": str(html_path),
+        "json_path": str(json_path),
+        "markdown_path": str(md_path),
+    }
+
+
+def write_chatgpt_export_manifest(destination_dir: Path, topic_label: str, manifest: Dict[str, Any]) -> Path:
+    topic_slug = sanitize(topic_label or "topic", max_len=48).replace(" ", "_")
+    manifest_path = destination_dir / f"chatgpt_{topic_slug}_manifest.json"
+    write_text(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False))
+    return manifest_path
+
+
+def export_single_chatgpt_conversation(
+    page,
+    destination_dir: Path,
+    ordinal: int = 1,
+    bundle_prefix: str = "conversation",
+) -> Dict[str, Any]:
+    conversation_id = conversation_id_from_url(page.url)
+    conversation = None
+    api_error = ""
+    if conversation_id and conversation_id != "untitled":
+        try:
+            raw_payload = fetch_chatgpt_conversation_api_payload(page, conversation_id)
+            conversation = build_chatgpt_conversation_from_api_payload(raw_payload, conversation_id, fallback_url=page.url)
+        except Exception as exc:
+            api_error = f"{type(exc).__name__}: {exc}"
+
+    if conversation is None:
+        load_full_chatgpt_conversation_history(page)
+        conversation = extract_chatgpt_conversation_payload(page)
+
+    conversation["conversation_id"] = conversation_id
+    if api_error:
+        conversation["api_error"] = api_error
+    if not conversation.get("title"):
+        conversation["title"] = conversation["conversation_id"] or "conversation"
+
+    export_root = destination_dir / bundle_prefix
+    export_root.mkdir(parents=True, exist_ok=True)
+    saved_paths = save_chatgpt_conversation_bundle(page, export_root, conversation, ordinal)
+    return {
+        "conversation": conversation,
+        "saved_paths": saved_paths,
+        "root_dir": str(export_root),
+    }
+
+
+def cmd_chatgpt_list(args) -> Dict[str, Any]:
+    playwright, browser = connect_browser(args.cdp)
+    try:
+        context = choose_context(browser)
+        page, created = choose_page(context, page_url_contains=args.page_url_contains)
+        try:
+            open_chatgpt_target(page, url=args.url)
+            ensure_chatgpt_sidebar_visible(page)
+            load_all_chatgpt_sidebar_items(page)
+            entries = extract_chatgpt_sidebar_entries(page)
+            if args.title_contains:
+                needle = clean_text(args.title_contains).lower()
+                entries = [entry for entry in entries if needle in clean_text(entry.get("title") or "").lower()]
+            if args.limit:
+                entries = entries[: args.limit]
+            return {
+                "status": "ok",
+                "count": len(entries),
+                "items": entries,
+            }
+        finally:
+            if created:
+                page.close()
+    finally:
+        browser.close()
+        playwright.stop()
+
+
+def cmd_chatgpt_open(args) -> Dict[str, Any]:
+    playwright, browser = connect_browser(args.cdp)
+    try:
+        context = choose_context(browser)
+        page, created = choose_page(context, page_url_contains=args.page_url_contains)
+        try:
+            selection = open_chatgpt_target(
+                page,
+                url=args.url,
+                conversation_id=args.conversation_id,
+                title_contains=args.title_contains,
+                new_chat=args.new_chat,
+            )
+            result: Dict[str, Any] = {
+                "status": "ok",
+                "selection": selection,
+                "url": page.url,
+            }
+            if args.export_dir:
+                export_dir = ensure_existing_directory(args.export_dir, "ChatGPT export directory")
+                exported = export_single_chatgpt_conversation(page, export_dir, bundle_prefix="selected_conversation")
+                result["export"] = exported
+            return result
+        finally:
+            if created:
+                page.close()
+    finally:
+        browser.close()
+        playwright.stop()
+
+
+def cmd_chatgpt_save(args) -> Dict[str, Any]:
+    export_dir = ensure_existing_directory(args.destination_dir, "ChatGPT destination directory")
+    playwright, browser = connect_browser(args.cdp)
+    try:
+        context = choose_context(browser)
+        page, created = choose_page(context, page_url_contains=args.page_url_contains)
+        try:
+            open_chatgpt_target(
+                page,
+                url=args.url,
+                conversation_id=args.conversation_id,
+                title_contains=args.title_contains,
+                new_chat=args.new_chat,
+            )
+            exported = export_single_chatgpt_conversation(page, export_dir)
+            return {
+                "status": "ok",
+                "url": page.url,
+                "conversation_id": exported["conversation"].get("conversation_id") or conversation_id_from_url(page.url),
+                "title": exported["conversation"].get("title") or "",
+                "message_count": exported["conversation"].get("message_count") or len(exported["conversation"].get("messages", [])),
+                "saved_paths": exported["saved_paths"],
+            }
+        finally:
+            if created:
+                page.close()
+    finally:
+        browser.close()
+        playwright.stop()
+
+
+def cmd_chatgpt_delete(args) -> Dict[str, Any]:
+    if not args.confirm_delete:
+        raise RuntimeError("chatgpt-delete is destructive. Re-run with --confirm-delete after verifying the target.")
+    if not args.current_chat and not args.conversation_id and not args.title_contains:
+        raise RuntimeError("Provide --conversation-id, --title-contains, or --current-chat.")
+
+    export_dir = ensure_existing_directory(args.export_dir, "ChatGPT export directory") if args.export_dir else None
+    playwright, browser = connect_browser(args.cdp)
+    try:
+        context = choose_context(browser)
+        page, created = choose_page(context, page_url_contains=args.page_url_contains)
+        try:
+            selection = open_chatgpt_target(
+                page,
+                url=None if args.current_chat else args.url,
+                conversation_id=args.conversation_id,
+                title_contains=args.title_contains,
+                new_chat=False,
+            )
+            if args.current_chat and "/c/" not in (page.url or ""):
+                raise RuntimeError(
+                    "Current page is not an existing ChatGPT conversation. Open the target chat first or provide --conversation-id/--title-contains."
+                )
+
+            conversation = extract_chatgpt_conversation_payload(page)
+            conversation_id = conversation_id_from_url(page.url)
+            title = conversation.get("title") or selection.get("title") or conversation_id
+
+            exported = None
+            if export_dir is not None:
+                exported = export_single_chatgpt_conversation(page, export_dir, bundle_prefix="deleted_conversation_backup")
+
+            deletion = delete_current_chatgpt_conversation(page, expected_conversation_id=conversation_id)
+            return {
+                "status": "ok",
+                "selection": selection,
+                "conversation_id": conversation_id,
+                "title": title,
+                "export": exported,
+                "deletion": deletion,
+                "url_after_delete": page.url,
+            }
+        finally:
+            if created:
+                page.close()
+    finally:
+        browser.close()
+        playwright.stop()
+
+
+def cmd_chatgpt_ask(args) -> Dict[str, Any]:
+    destination_dir = ensure_existing_directory(args.destination_dir, "ChatGPT destination directory")
+    run_dir = destination_dir / sanitize(args.result_name or f"chatgpt_ask_{time.strftime('%Y%m%d_%H%M%S')}")
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    playwright, browser = connect_browser(args.cdp)
+    try:
+        context = choose_context(browser)
+        page, created = choose_page(context, page_url_contains=args.page_url_contains)
+        try:
+            selection = open_chatgpt_target(
+                page,
+                url=args.url,
+                conversation_id=args.conversation_id,
+                title_contains=args.title_contains,
+                new_chat=args.new_chat,
+            )
+
+            history_before = None
+            if args.export_history_before:
+                history_before = export_single_chatgpt_conversation(page, run_dir, bundle_prefix="history_before")
+
+            before_conversation = extract_chatgpt_conversation_payload(page)
+            uploaded_paths = upload_chatgpt_files(page, args.attachment or [])
+            set_chatgpt_prompt_text(page, args.prompt)
+            chatgpt_send_prompt(page)
+            after_conversation, assistant_message = wait_for_chatgpt_answer(page, before_conversation, timeout_seconds=args.timeout)
+            after_conversation["conversation_id"] = conversation_id_from_url(page.url)
+            if not after_conversation.get("title"):
+                after_conversation["title"] = after_conversation["conversation_id"] or "conversation"
+
+            history_after = export_single_chatgpt_conversation(page, run_dir, bundle_prefix="history_after")
+            answer_text = assistant_message.get("text") or ""
+            answer_text_path = run_dir / "assistant_answer.txt"
+            write_text(answer_text_path, answer_text)
+
+            files_dir = run_dir / "assistant_files"
+            downloaded_files = download_chatgpt_message_files(
+                page,
+                files_dir,
+                base_name=sanitize(after_conversation.get("title") or "assistant_file"),
+            )
+
+            result = {
+                "status": "ok",
+                "selection": selection,
+                "url": page.url,
+                "conversation_id": after_conversation.get("conversation_id") or conversation_id_from_url(page.url),
+                "title": after_conversation.get("title") or "",
+                "prompt": args.prompt,
+                "uploaded_paths": uploaded_paths,
+                "assistant_text": answer_text,
+                "assistant_text_path": str(answer_text_path),
+                "downloaded_files": downloaded_files,
+                "history_before": history_before,
+                "history_after": history_after,
+                "output_dir": str(run_dir),
+            }
+            result_path = run_dir / "result.json"
+            write_text(result_path, json.dumps(result, indent=2, ensure_ascii=False))
+            result["result_path"] = str(result_path)
+            return result
+        finally:
+            if created:
+                page.close()
+    finally:
+        browser.close()
+        playwright.stop()
+
+
+def cmd_chatgpt_export(args) -> Dict[str, Any]:
+    destination_dir = ensure_existing_directory(args.destination_dir, "ChatGPT destination directory")
+    fallback_keywords = DEFAULT_STUDY_KEYWORDS if args.default_study_keywords else None
+    keywords = normalize_keyword_list(args.keyword, fallback_keywords=fallback_keywords)
+    topic_label = clean_text(args.topic_label or "")
+    if not topic_label:
+        topic_label = "learning" if args.default_study_keywords else "topic"
+    if not keywords and not args.save_all:
+        raise RuntimeError("Provide --keyword, use --default-study-keywords, or pass --save-all.")
+    risk_report = build_chatgpt_risk_report(
+        keywords=keywords,
+        topic_label=topic_label,
+        save_all=args.save_all,
+        use_study_keywords=args.default_study_keywords,
+        explicit_limit=args.limit,
+    )
+    warnings = list(risk_report["warnings"])
+    effective_limit = risk_report["effective_limit"]
+
+    playwright, browser = connect_browser(args.cdp)
+    try:
+        context = choose_context(browser)
+        page, created = choose_page(context, page_url_contains=args.page_url_contains)
+        try:
+            url = args.url or page.url or "https://chatgpt.com/"
+            page.goto(url, wait_until="domcontentloaded", timeout=120000)
+            page.wait_for_timeout(1800)
+
+            host = get_url_host(page.url)
+            if host not in CHATGPT_HOSTS:
+                raise RuntimeError(f"The current page is not ChatGPT: {page.url}")
+            if "/auth/" in page.url or "/login" in page.url:
+                raise RuntimeError("ChatGPT does not appear to be logged in in this browser profile.")
+            initial_guard = detect_chatgpt_guard_signal(page)
+            if initial_guard:
+                raise RuntimeError(f"ChatGPT appears to be temporarily guarded or rate-limited: {initial_guard['signal']}")
+
+            ensure_chatgpt_sidebar_visible(page)
+            load_all_chatgpt_sidebar_items(page)
+            entries = extract_chatgpt_sidebar_entries(page)
+            if not entries:
+                raise RuntimeError("No ChatGPT conversations were found in the sidebar. Make sure history is enabled and the session is logged in.")
+
+            if effective_limit:
+                entries = entries[: effective_limit]
+
+            manifest_items: List[Dict[str, Any]] = []
+            matched_count = 0
+            saved_count = 0
+            processed_count = 0
+            consecutive_errors = 0
+            stop_reason = ""
+            status = "ok"
+
+            manifest: Dict[str, Any] = {
+                "status": status,
+                "root_dir": str(destination_dir),
+                "count": len(entries),
+                "processed_count": processed_count,
+                "matched_count": matched_count,
+                "saved_count": saved_count,
+                "topic_label": topic_label,
+                "keywords": keywords,
+                "risk_level": risk_report["risk_level"],
+                "effective_limit": effective_limit,
+                "auto_limited": risk_report["auto_limited"],
+                "warnings": warnings,
+                "stop_reason": stop_reason,
+                "items": manifest_items,
+            }
+            manifest_path = write_chatgpt_export_manifest(destination_dir, topic_label, manifest)
+
+            for index, entry in enumerate(entries, start=1):
+                try:
+                    throttle_chatgpt_request("browse", f"export_open:{entry.get('conversation_id') or entry.get('title') or index}")
+                    page.goto(entry["href"], wait_until="domcontentloaded", timeout=120000)
+                    wait_for_chatgpt_conversation(page)
+                    guard_signal = detect_chatgpt_guard_signal(page)
+                    if guard_signal:
+                        stop_reason = f"guard_detected: {guard_signal['signal']}"
+                        warnings.append(
+                            "ChatGPT showed a temporary guard or rate-limit signal. "
+                            "The export stopped early to avoid stressing the session."
+                        )
+                        status = "stopped_guard"
+                        break
+
+                    conversation = extract_chatgpt_conversation_payload(page)
+                    conversation["conversation_id"] = entry.get("conversation_id") or conversation_id_from_url(page.url)
+                    if not conversation.get("title"):
+                        conversation["title"] = entry.get("title") or conversation["conversation_id"]
+
+                    classification = classify_chatgpt_topic_match(conversation, keywords, topic_label=topic_label)
+                    conversation.update(classification)
+
+                    saved_paths = {}
+                    item_status = "scanned"
+                    if conversation["topic_match"] or args.save_all:
+                        saved_paths = save_chatgpt_conversation_bundle(page, destination_dir, conversation, index)
+                        saved_count += 1
+                        item_status = "saved"
+                    if conversation["topic_match"]:
+                        matched_count += 1
+
+                    manifest_items.append(
+                        {
+                            "index": index,
+                            "status": item_status,
+                            "title": conversation.get("title") or "",
+                            "url": conversation.get("url") or entry["href"],
+                            "conversation_id": conversation.get("conversation_id") or "",
+                            "message_count": conversation.get("message_count") or len(conversation.get("messages", [])),
+                            "topic_label": conversation.get("topic_label") or topic_label,
+                            "topic_match": conversation.get("topic_match", False),
+                            "learning_related": conversation.get("learning_related", False),
+                            "matched_keywords": conversation.get("matched_keywords", []),
+                            "saved_paths": saved_paths,
+                        }
+                    )
+                    processed_count += 1
+                    consecutive_errors = 0
+                except Exception as exc:
+                    processed_count += 1
+                    consecutive_errors += 1
+                    error_message = f"{type(exc).__name__}: {exc}"
+                    manifest_items.append(
+                        {
+                            "index": index,
+                            "status": "error",
+                            "title": entry.get("title") or "",
+                            "url": entry.get("href") or "",
+                            "conversation_id": entry.get("conversation_id") or "",
+                            "error": error_message,
+                        }
+                    )
+
+                    error_lc = error_message.lower()
+                    if any(phrase in error_lc for phrase in CHATGPT_GUARD_PHRASES):
+                        stop_reason = f"guard_error: {error_message}"
+                        warnings.append(
+                            "A guard-like error appeared while opening conversations. "
+                            "The export stopped early to reduce the chance of temporary closure."
+                        )
+                        status = "stopped_guard"
+                        break
+                    if consecutive_errors >= 2:
+                        stop_reason = f"too_many_consecutive_errors: {error_message}"
+                        warnings.append(
+                            "The exporter hit multiple consecutive errors and stopped early instead of continuing to retry."
+                        )
+                        status = "partial"
+                        break
+                finally:
+                    manifest["status"] = status
+                    manifest["processed_count"] = processed_count
+                    manifest["matched_count"] = matched_count
+                    manifest["saved_count"] = saved_count
+                    manifest["warnings"] = dedupe_strings(warnings)
+                    manifest["stop_reason"] = stop_reason
+                    manifest["items"] = manifest_items
+                    manifest_path = write_chatgpt_export_manifest(destination_dir, topic_label, manifest)
+
+                if stop_reason:
+                    break
+                if index < len(entries):
+                    time.sleep(chatgpt_iteration_delay_seconds(risk_report["risk_level"]))
+
+            if stop_reason and status == "ok":
+                status = "partial"
+                manifest["status"] = status
+                manifest["stop_reason"] = stop_reason
+                manifest["warnings"] = dedupe_strings(warnings)
+                manifest_path = write_chatgpt_export_manifest(destination_dir, topic_label, manifest)
+
+            manifest["manifest_path"] = str(manifest_path)
+            return manifest
+        finally:
+            if created:
+                page.close()
+    finally:
+        browser.close()
+        playwright.stop()
 
 
 def save_html(page, out_path: Path) -> Path:
@@ -1711,6 +3654,66 @@ def build_parser() -> argparse.ArgumentParser:
     infer_spec_cmd.add_argument("--out")
     infer_spec_cmd.add_argument("--limit", type=int)
 
+    chatgpt_export = subparsers.add_parser("chatgpt-export")
+    chatgpt_export.add_argument("--cdp", required=True)
+    chatgpt_export.add_argument("--url", default="https://chatgpt.com/")
+    chatgpt_export.add_argument("--page-url-contains")
+    chatgpt_export.add_argument("--destination-dir", required=True)
+    chatgpt_export.add_argument("--limit", type=int)
+    chatgpt_export.add_argument("--save-all", action="store_true")
+    chatgpt_export.add_argument("--topic-label")
+    chatgpt_export.add_argument("--default-study-keywords", action="store_true")
+    chatgpt_export.add_argument("--keyword", action="append")
+
+    chatgpt_list = subparsers.add_parser("chatgpt-list")
+    chatgpt_list.add_argument("--cdp", required=True)
+    chatgpt_list.add_argument("--url", default="https://chatgpt.com/")
+    chatgpt_list.add_argument("--page-url-contains")
+    chatgpt_list.add_argument("--title-contains")
+    chatgpt_list.add_argument("--limit", type=int)
+
+    chatgpt_open = subparsers.add_parser("chatgpt-open")
+    chatgpt_open.add_argument("--cdp", required=True)
+    chatgpt_open.add_argument("--url", default="https://chatgpt.com/")
+    chatgpt_open.add_argument("--page-url-contains")
+    chatgpt_open.add_argument("--conversation-id")
+    chatgpt_open.add_argument("--title-contains")
+    chatgpt_open.add_argument("--new-chat", action="store_true")
+    chatgpt_open.add_argument("--export-dir")
+
+    chatgpt_save = subparsers.add_parser("chatgpt-save")
+    chatgpt_save.add_argument("--cdp", required=True)
+    chatgpt_save.add_argument("--url", default="https://chatgpt.com/")
+    chatgpt_save.add_argument("--page-url-contains")
+    chatgpt_save.add_argument("--conversation-id")
+    chatgpt_save.add_argument("--title-contains")
+    chatgpt_save.add_argument("--new-chat", action="store_true")
+    chatgpt_save.add_argument("--destination-dir", required=True)
+
+    chatgpt_delete = subparsers.add_parser("chatgpt-delete")
+    chatgpt_delete.add_argument("--cdp", required=True)
+    chatgpt_delete.add_argument("--url", default="https://chatgpt.com/")
+    chatgpt_delete.add_argument("--page-url-contains")
+    chatgpt_delete.add_argument("--conversation-id")
+    chatgpt_delete.add_argument("--title-contains")
+    chatgpt_delete.add_argument("--current-chat", action="store_true")
+    chatgpt_delete.add_argument("--export-dir")
+    chatgpt_delete.add_argument("--confirm-delete", action="store_true")
+
+    chatgpt_ask = subparsers.add_parser("chatgpt-ask")
+    chatgpt_ask.add_argument("--cdp", required=True)
+    chatgpt_ask.add_argument("--url", default="https://chatgpt.com/")
+    chatgpt_ask.add_argument("--page-url-contains")
+    chatgpt_ask.add_argument("--conversation-id")
+    chatgpt_ask.add_argument("--title-contains")
+    chatgpt_ask.add_argument("--new-chat", action="store_true")
+    chatgpt_ask.add_argument("--prompt", required=True)
+    chatgpt_ask.add_argument("--destination-dir", required=True)
+    chatgpt_ask.add_argument("--attachment", action="append")
+    chatgpt_ask.add_argument("--export-history-before", action="store_true")
+    chatgpt_ask.add_argument("--result-name")
+    chatgpt_ask.add_argument("--timeout", type=int, default=300)
+
     batch = subparsers.add_parser("batch")
     batch.add_argument("--cdp", required=True)
     batch.add_argument("--spec", required=True)
@@ -1733,6 +3736,18 @@ def main() -> int:
             result = cmd_save_page(args)
         elif args.command == "download":
             result = cmd_download(args)
+        elif args.command == "chatgpt-list":
+            result = cmd_chatgpt_list(args)
+        elif args.command == "chatgpt-open":
+            result = cmd_chatgpt_open(args)
+        elif args.command == "chatgpt-save":
+            result = cmd_chatgpt_save(args)
+        elif args.command == "chatgpt-delete":
+            result = cmd_chatgpt_delete(args)
+        elif args.command == "chatgpt-ask":
+            result = cmd_chatgpt_ask(args)
+        elif args.command == "chatgpt-export":
+            result = cmd_chatgpt_export(args)
         elif args.command == "batch":
             result = cmd_batch(args)
         else:

@@ -29,7 +29,7 @@ $groups = @(
     }
     @{
         Title = 'Web Auth'
-        Names = @('auth-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-help')
+        Names = @('auth-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-chatgpt-dump', 'auth-chatgpt-export', 'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-help')
     }
 )
 

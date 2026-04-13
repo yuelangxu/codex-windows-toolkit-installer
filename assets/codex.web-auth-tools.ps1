@@ -1,5 +1,11 @@
 function Get-CodexAuthHelperScriptPath {
-    return (Join-Path $HOME 'Documents\PowerShell\Scripts\codex_auth_web.py')
+    $profileRootCommand = Get-Command 'Get-CodexPowerShellProfileRoot' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -ne $profileRootCommand) {
+        return (Join-Path (Get-CodexPowerShellProfileRoot) 'Scripts\codex_auth_web.py')
+    }
+
+    $myDocuments = [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments)
+    return (Join-Path (Join-Path $myDocuments 'PowerShell') 'Scripts\codex_auth_web.py')
 }
 
 function Get-CodexPythonPath {
@@ -157,6 +163,31 @@ function Invoke-CodexAuthHelper {
     }
 
     return ($raw | ConvertFrom-Json)
+}
+
+function Resolve-CodexExistingDirectory {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [string]$Label = 'Directory'
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "$Label must be specified."
+    }
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "$Label does not exist: $Path"
+    }
+
+    $item = Get-Item -LiteralPath $Path -ErrorAction Stop
+    if (-not $item.PSIsContainer) {
+        throw "$Label is not a directory: $Path"
+    }
+
+    return $item.FullName
 }
 
 function Start-CodexAuthBrowser {
@@ -437,6 +468,337 @@ function Invoke-CodexAuthDump {
     }
 }
 
+function Export-CodexChatGptDump {
+    [CmdletBinding()]
+    param(
+        [string]$Url = 'https://chatgpt.com/',
+
+        [string]$PageUrlContains = 'chatgpt.com',
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationDir,
+
+        [string]$RootName,
+
+        [string[]]$Keyword,
+
+        [string]$TopicLabel,
+
+        [int]$Port = 9222,
+
+        [int]$Limit,
+
+        [switch]$SaveAll,
+
+        [switch]$UseStudyKeywords
+    )
+
+    if (-not $SaveAll -and -not $UseStudyKeywords -and ($null -eq $Keyword -or $Keyword.Count -eq 0)) {
+        throw 'Provide -Keyword, or use -UseStudyKeywords, or pass -SaveAll.'
+    }
+
+    $resolvedDestinationDir = Resolve-CodexExistingDirectory -Path $DestinationDir -Label 'ChatGPT destination directory'
+
+    $advisories = New-Object System.Collections.Generic.List[string]
+    $normalizedKeywords = New-Object System.Collections.Generic.List[string]
+    if ($null -ne $Keyword) {
+        foreach ($rawKeyword in $Keyword) {
+            foreach ($part in (($rawKeyword -split '[;,]') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+                [void]$normalizedKeywords.Add($part.Trim())
+            }
+        }
+    }
+
+    $broadKeywords = @('study', 'learning', 'learn', 'note', 'notes', 'course', 'courses', 'lecture', 'lectures', 'assignment', 'university', 'ucl', 'physics', 'math', 'mathematics', 'research', 'paper', 'essay', 'coding', 'python', 'car', 'cars', 'flower', 'flowers', 'garden')
+    $broadHits = @($normalizedKeywords | Where-Object {
+        $candidate = $_.ToLowerInvariant()
+        ($candidate.Length -le 3) -or ($broadKeywords -contains $candidate)
+    })
+
+    if ($SaveAll) {
+        [void]$advisories.Add('`-SaveAll` is the broadest mode and is the most likely to trigger temporary ChatGPT protections.')
+    }
+    if ($UseStudyKeywords) {
+        [void]$advisories.Add('The built-in learning template is intentionally broad and can match a large portion of your chat history.')
+    }
+    if ($broadHits.Count -gt 0) {
+        [void]$advisories.Add(('Broad/generic keywords detected: {0}' -f ([string]::Join(', ', ($broadHits | Select-Object -First 8)))))
+    }
+    if (-not $PSBoundParameters.ContainsKey('Limit') -and ($SaveAll -or $UseStudyKeywords -or $broadHits.Count -gt 0)) {
+        [void]$advisories.Add('No `-Limit` was provided. The exporter will auto-cap broad scans to a safer sample size to reduce the chance of temporary restrictions.')
+    }
+    foreach ($advisory in @($advisories | Select-Object -Unique)) {
+        Write-Warning $advisory
+    }
+
+    if ([string]::IsNullOrWhiteSpace($RootName)) {
+        if ($UseStudyKeywords) {
+            $rootPrefix = 'ChatGPT_Learning_Export'
+        } elseif (-not [string]::IsNullOrWhiteSpace($TopicLabel)) {
+            $safeTopic = ($TopicLabel -replace '[<>:"/\\|?*\x00-\x1f]', '_').Trim()
+            if ([string]::IsNullOrWhiteSpace($safeTopic)) {
+                $safeTopic = 'Topic'
+            }
+            $rootPrefix = 'ChatGPT_{0}_Export' -f $safeTopic
+        } elseif ($SaveAll) {
+            $rootPrefix = 'ChatGPT_All_Export'
+        } else {
+            $rootPrefix = 'ChatGPT_Topic_Export'
+        }
+        $resolvedRootName = '{0}_{1}' -f $rootPrefix, (Get-Date -Format 'yyyyMMdd_HHmmss')
+    } else {
+        $resolvedRootName = $RootName
+    }
+    $rootDir = Join-Path $resolvedDestinationDir $resolvedRootName
+    New-Item -ItemType Directory -Path $rootDir -Force | Out-Null
+
+    $arguments = @('chatgpt-export', '--cdp', "http://127.0.0.1:$Port", '--destination-dir', $rootDir)
+    if (-not [string]::IsNullOrWhiteSpace($Url)) {
+        $arguments += @('--url', $Url)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($PageUrlContains)) {
+        $arguments += @('--page-url-contains', $PageUrlContains)
+    }
+    if ($PSBoundParameters.ContainsKey('Limit') -and $Limit -gt 0) {
+        $arguments += @('--limit', $Limit.ToString())
+    }
+    if ($SaveAll) {
+        $arguments += '--save-all'
+    }
+    if ($UseStudyKeywords) {
+        $arguments += '--default-study-keywords'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TopicLabel)) {
+        $arguments += @('--topic-label', $TopicLabel)
+    }
+    if ($null -ne $Keyword) {
+        foreach ($item in $Keyword) {
+            if (-not [string]::IsNullOrWhiteSpace($item)) {
+                $arguments += @('--keyword', $item)
+            }
+        }
+    }
+
+    $result = Invoke-CodexAuthHelper -Arguments $arguments
+    if ($null -ne $result -and $result.PSObject.Properties.Name -contains 'warnings') {
+        foreach ($warning in @($result.warnings)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$warning)) {
+                Write-Warning ([string]$warning)
+            }
+        }
+    }
+    $result
+}
+
+function Export-CodexChatGptLearningDump {
+    [CmdletBinding()]
+    param(
+        [string]$Url = 'https://chatgpt.com/',
+
+        [string]$PageUrlContains = 'chatgpt.com',
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationDir,
+
+        [string]$RootName,
+
+        [int]$Port = 9222,
+
+        [int]$Limit,
+
+        [switch]$SaveAll
+    )
+
+    Export-CodexChatGptDump -Url $Url -PageUrlContains $PageUrlContains -DestinationDir $DestinationDir -RootName $RootName -Port $Port -Limit $Limit -SaveAll:$SaveAll -UseStudyKeywords -TopicLabel 'learning'
+}
+
+function Get-CodexChatGptConversationList {
+    [CmdletBinding()]
+    param(
+        [string]$Url = 'https://chatgpt.com/',
+        [string]$PageUrlContains = 'chatgpt.com',
+        [string]$TitleContains,
+        [int]$Port = 9222,
+        [int]$Limit
+    )
+
+    $arguments = @('chatgpt-list', '--cdp', "http://127.0.0.1:$Port", '--url', $Url)
+    if (-not [string]::IsNullOrWhiteSpace($PageUrlContains)) {
+        $arguments += @('--page-url-contains', $PageUrlContains)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TitleContains)) {
+        $arguments += @('--title-contains', $TitleContains)
+    }
+    if ($PSBoundParameters.ContainsKey('Limit') -and $Limit -gt 0) {
+        $arguments += @('--limit', $Limit.ToString())
+    }
+
+    Invoke-CodexAuthHelper -Arguments $arguments
+}
+
+function Open-CodexChatGptConversation {
+    [CmdletBinding()]
+    param(
+        [string]$Url = 'https://chatgpt.com/',
+        [string]$PageUrlContains = 'chatgpt.com',
+        [string]$ConversationId,
+        [string]$TitleContains,
+        [switch]$NewChat,
+        [string]$ExportDir,
+        [int]$Port = 9222
+    )
+
+    $arguments = @('chatgpt-open', '--cdp', "http://127.0.0.1:$Port", '--url', $Url)
+    if (-not [string]::IsNullOrWhiteSpace($PageUrlContains)) {
+        $arguments += @('--page-url-contains', $PageUrlContains)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ConversationId)) {
+        $arguments += @('--conversation-id', $ConversationId)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TitleContains)) {
+        $arguments += @('--title-contains', $TitleContains)
+    }
+    if ($NewChat) {
+        $arguments += '--new-chat'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ExportDir)) {
+        $resolvedExportDir = Resolve-CodexExistingDirectory -Path $ExportDir -Label 'ChatGPT export directory'
+        $arguments += @('--export-dir', $resolvedExportDir)
+    }
+
+    Invoke-CodexAuthHelper -Arguments $arguments
+}
+
+function Save-CodexChatGptConversation {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationDir,
+        [string]$Url = 'https://chatgpt.com/',
+        [string]$PageUrlContains = 'chatgpt.com',
+        [string]$ConversationId,
+        [string]$TitleContains,
+        [switch]$NewChat,
+        [int]$Port = 9222
+    )
+
+    $resolvedDestinationDir = Resolve-CodexExistingDirectory -Path $DestinationDir -Label 'ChatGPT destination directory'
+    $arguments = @('chatgpt-save', '--cdp', "http://127.0.0.1:$Port", '--url', $Url, '--destination-dir', $resolvedDestinationDir)
+    if (-not [string]::IsNullOrWhiteSpace($PageUrlContains)) {
+        $arguments += @('--page-url-contains', $PageUrlContains)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ConversationId)) {
+        $arguments += @('--conversation-id', $ConversationId)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TitleContains)) {
+        $arguments += @('--title-contains', $TitleContains)
+    }
+    if ($NewChat) {
+        $arguments += '--new-chat'
+    }
+
+    Invoke-CodexAuthHelper -Arguments $arguments
+}
+
+function Invoke-CodexChatGptPrompt {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Prompt,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationDir,
+
+        [string]$Url = 'https://chatgpt.com/',
+        [string]$PageUrlContains = 'chatgpt.com',
+        [string]$ConversationId,
+        [string]$TitleContains,
+        [switch]$NewChat,
+        [string[]]$AttachmentPath,
+        [switch]$ExportHistoryBefore,
+        [string]$ResultName,
+        [int]$TimeoutSeconds = 300,
+        [int]$Port = 9222
+    )
+
+    $resolvedDestinationDir = Resolve-CodexExistingDirectory -Path $DestinationDir -Label 'ChatGPT destination directory'
+    $arguments = @('chatgpt-ask', '--cdp', "http://127.0.0.1:$Port", '--url', $Url, '--prompt', $Prompt, '--destination-dir', $resolvedDestinationDir, '--timeout', $TimeoutSeconds.ToString())
+    if (-not [string]::IsNullOrWhiteSpace($PageUrlContains)) {
+        $arguments += @('--page-url-contains', $PageUrlContains)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ConversationId)) {
+        $arguments += @('--conversation-id', $ConversationId)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TitleContains)) {
+        $arguments += @('--title-contains', $TitleContains)
+    }
+    if ($NewChat) {
+        $arguments += '--new-chat'
+    }
+    if ($ExportHistoryBefore) {
+        $arguments += '--export-history-before'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ResultName)) {
+        $arguments += @('--result-name', $ResultName)
+    }
+    if ($null -ne $AttachmentPath) {
+        foreach ($path in $AttachmentPath) {
+            if ([string]::IsNullOrWhiteSpace($path)) {
+                continue
+            }
+            $resolvedAttachment = (Resolve-Path -LiteralPath $path -ErrorAction Stop).Path
+            $arguments += @('--attachment', $resolvedAttachment)
+        }
+    }
+
+    Invoke-CodexAuthHelper -Arguments $arguments
+}
+
+function Remove-CodexChatGptConversation {
+    [CmdletBinding()]
+    param(
+        [string]$Url = 'https://chatgpt.com/',
+        [string]$PageUrlContains = 'chatgpt.com',
+        [string]$ConversationId,
+        [string]$TitleContains,
+        [switch]$CurrentChat,
+        [string]$ExportDir,
+        [switch]$Force,
+        [int]$Port = 9222
+    )
+
+    if (-not $Force) {
+        throw 'Deleting a ChatGPT conversation is destructive. Rerun with -Force after verifying the target.'
+    }
+
+    if (-not $CurrentChat -and [string]::IsNullOrWhiteSpace($ConversationId) -and [string]::IsNullOrWhiteSpace($TitleContains)) {
+        throw 'Provide -ConversationId, -TitleContains, or -CurrentChat.'
+    }
+
+    $arguments = @('chatgpt-delete', '--cdp', "http://127.0.0.1:$Port", '--confirm-delete')
+    if (-not $CurrentChat -and -not [string]::IsNullOrWhiteSpace($Url)) {
+        $arguments += @('--url', $Url)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($PageUrlContains)) {
+        $arguments += @('--page-url-contains', $PageUrlContains)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ConversationId)) {
+        $arguments += @('--conversation-id', $ConversationId)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TitleContains)) {
+        $arguments += @('--title-contains', $TitleContains)
+    }
+    if ($CurrentChat) {
+        $arguments += '--current-chat'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ExportDir)) {
+        $resolvedExportDir = Resolve-CodexExistingDirectory -Path $ExportDir -Label 'ChatGPT export directory'
+        $arguments += @('--export-dir', $resolvedExportDir)
+    }
+
+    Invoke-CodexAuthHelper -Arguments $arguments
+}
+
 function New-CodexMoodleSpec {
     [CmdletBinding()]
     param(
@@ -556,9 +918,37 @@ Codex web-auth helpers
    auth-moodle-dump -PageUrlContains moodle.ucl.ac.uk/course/view.php?id=123 -DestinationDir .\Exports
    auth-sharepoint-dump -PageUrlContains sharepoint.com -DestinationDir .\Exports
    auth-panopto-dump -PageUrlContains panopto.com -DestinationDir .\Exports
+   auth-chatgpt-dump -DestinationDir C:\Exports -Keyword 'study','UCL','lecture' -TopicLabel learning
+   auth-chatgpt-dump -DestinationDir C:\Exports -Keyword 'car','cars','automobile' -TopicLabel cars
+   auth-chatgpt-dump -DestinationDir C:\Exports -Keyword 'peony','flower','garden' -TopicLabel flowers
+   auth-chatgpt-dump -DestinationDir C:\Exports -SaveAll
+   auth-chatgpt-study-dump -DestinationDir C:\Exports
 
 8. Use -Limit for a small smoke test before a full site dump:
    auth-dump -Site moodle -PageUrlContains moodle.ucl.ac.uk/course/view.php?id=123 -DestinationDir .\Test -Limit 5
+   auth-chatgpt-dump -DestinationDir C:\Exports -Keyword 'UCL','physics' -TopicLabel learning -Limit 12
+
+10. ChatGPT control helpers:
+   auth-chatgpt-list -Limit 20
+   auth-chatgpt-open -NewChat
+   auth-chatgpt-open -TitleContains 'Atomic Physics'
+   auth-chatgpt-save -DestinationDir C:\Exports -TitleContains 'Atomic Physics'
+   auth-chatgpt-delete -TitleContains 'Atomic Physics' -Force
+   auth-chatgpt-delete -CurrentChat -ExportDir C:\Exports -Force
+   auth-chatgpt-ask -NewChat -Prompt 'Summarize atomic orbitals.' -DestinationDir C:\Exports
+   auth-chatgpt-ask -TitleContains 'Atomic Physics' -Prompt 'Continue from the previous derivation.' -DestinationDir C:\Exports -ExportHistoryBefore
+   auth-chatgpt-ask -NewChat -Prompt 'Read the attached file and summarize it.' -AttachmentPath C:\Docs\notes.pdf,C:\Pics\diagram.png -DestinationDir C:\Exports
+
+9. ChatGPT safety note:
+   Broad keywords and -SaveAll can touch too many conversations too quickly.
+   That may trigger temporary ChatGPT protections or temporary closures.
+   If you omit -Limit on a broad ChatGPT export, the tool now auto-caps to a smaller sample and warns first.
+   ChatGPT export/ask commands now expect an existing destination directory. If the directory does not exist, they fail fast.
+   ChatGPT browser actions are now rate-limited by default across commands, so repeated list/open/ask/delete runs are spaced out automatically.
+   If ChatGPT shows a Too many requests dialog, the tool now tries to click Got it and waits about 10 seconds before retrying.
+   ChatGPT deletion now prefers an authenticated API path first and only falls back to UI actions when needed.
+   The page helper now injects reduced-motion styles and hides common floating overlays that intercept clicks.
+   ChatGPT deletion is destructive. Use auth-chatgpt-delete with -Force, and optionally -ExportDir to back up the chat before removing it.
 
 Batch spec example:
 [
@@ -583,4 +973,12 @@ Set-Alias -Name auth-panopto-spec -Value New-CodexPanoptoSpec -Scope Global -Opt
 Set-Alias -Name auth-moodle-dump -Value Invoke-CodexMoodleDump -Scope Global -Option AllScope -Force
 Set-Alias -Name auth-sharepoint-dump -Value Invoke-CodexSharePointDump -Scope Global -Option AllScope -Force
 Set-Alias -Name auth-panopto-dump -Value Invoke-CodexPanoptoDump -Scope Global -Option AllScope -Force
+Set-Alias -Name auth-chatgpt-dump -Value Export-CodexChatGptDump -Scope Global -Option AllScope -Force
+Set-Alias -Name auth-chatgpt-export -Value Export-CodexChatGptDump -Scope Global -Option AllScope -Force
+Set-Alias -Name auth-chatgpt-study-dump -Value Export-CodexChatGptLearningDump -Scope Global -Option AllScope -Force
+Set-Alias -Name auth-chatgpt-list -Value Get-CodexChatGptConversationList -Scope Global -Option AllScope -Force
+Set-Alias -Name auth-chatgpt-open -Value Open-CodexChatGptConversation -Scope Global -Option AllScope -Force
+Set-Alias -Name auth-chatgpt-save -Value Save-CodexChatGptConversation -Scope Global -Option AllScope -Force
+Set-Alias -Name auth-chatgpt-ask -Value Invoke-CodexChatGptPrompt -Scope Global -Option AllScope -Force
+Set-Alias -Name auth-chatgpt-delete -Value Remove-CodexChatGptConversation -Scope Global -Option AllScope -Force
 Set-Alias -Name auth-help -Value Show-CodexAuthHelp -Scope Global -Option AllScope -Force
