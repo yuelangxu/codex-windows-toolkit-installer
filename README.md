@@ -89,6 +89,21 @@ They now auto-bootstrap a ChatGPT-ready browser session in one command, and thei
 `auth-chatgpt-ask` also accepts prompt text as a positional argument, pipeline input, or `-PromptPath`, which makes it much more forgiving for LLM-generated PowerShell commands that would otherwise trip over quote escaping.
 Long or multi-line prompts are automatically spooled through a UTF-8 temp file, and the reply timeout is treated as a stall timeout instead of a hard cap on total answer length.
 
+### Browser extension automation helpers
+
+- `auth-extension-install`
+- `auth-extension-list`
+- `auth-extension-enable`
+- `auth-extension-disable`
+- `auth-extension-open`
+- `auth-extension-click`
+- `auth-extension-remove`
+
+These commands let PowerShell manage Chromium extensions as first-class toolkit assets.
+You can install an unpacked extension directory, a local zip or CRX package, or a package URL, and the toolkit will copy it into a managed state root under the PowerShell toolkit.
+Enabled extensions are loaded together into the managed automation browser, which means multiple extensions can cooperate in the same Codex-driven session instead of depending on a manually prepared desktop profile.
+The extension helpers can also open an extension popup or options page and click controls inside that UI, which makes extension-based auth, wallet, scraper, or productivity workflows much easier to automate from PowerShell.
+
 ## Why this improves Codex productivity
 
 This toolkit raises the floor and the ceiling for Codex on Windows.
@@ -96,6 +111,7 @@ This toolkit raises the floor and the ceiling for Codex on Windows.
 - It gives Codex a stable set of command names and wrappers, so suggested commands are more likely to work immediately.
 - It front-loads practical tooling for inspection, refactoring, automation, scraping, document handling, and debugging.
 - It adds authenticated ChatGPT automation commands to the same PowerShell toolbelt, so browser-driven save, dump, ask, and cleanup workflows live beside the rest of the auth tooling.
+- It adds browser-extension management and extension-UI automation, so Codex can install helper extensions, load them into a predictable browser session, and drive their popups or settings pages from the shell.
 - It improves shell feedback with inventory, prediction, aliases, and prompt context, which shortens the loop between idea and execution.
 - It avoids common Windows failure modes around OCR, Python package compatibility, DLL paths, and profile location mismatches.
 - It makes machine setup repeatable, so rebuilding a usable environment no longer depends on memory or handwritten notes.

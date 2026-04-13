@@ -1,4 +1,9 @@
 function Get-CodexAuthHelperScriptPath {
+    $siblingHelperPath = Join-Path $PSScriptRoot 'codex_auth_web.py'
+    if (-not [string]::IsNullOrWhiteSpace($siblingHelperPath) -and (Test-Path -LiteralPath $siblingHelperPath)) {
+        return $siblingHelperPath
+    }
+
     $profileRootCommand = Get-Command 'Get-CodexPowerShellProfileRoot' -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -ne $profileRootCommand) {
         return (Join-Path (Get-CodexPowerShellProfileRoot) 'Scripts\codex_auth_web.py')
@@ -147,6 +152,397 @@ function Get-CodexChatGptManagedUserDataDir {
     )
 
     return (Join-Path (Get-CodexChatGptBrowserStateRoot) ("{0}-user-data" -f $Browser))
+}
+
+function Get-CodexBrowserExtensionStateRoot {
+    [CmdletBinding()]
+    param()
+
+    return (Join-Path (Get-CodexAuthToolkitRoot) 'state\browser-extensions')
+}
+
+function Get-CodexBrowserExtensionRegistryPath {
+    [CmdletBinding()]
+    param()
+
+    return (Join-Path (Get-CodexBrowserExtensionStateRoot) 'registry.json')
+}
+
+function Get-CodexBrowserExtensionPackagesRoot {
+    [CmdletBinding()]
+    param()
+
+    return (Join-Path (Get-CodexBrowserExtensionStateRoot) 'packages')
+}
+
+function Get-CodexBrowserExtensionUnpackedRoot {
+    [CmdletBinding()]
+    param()
+
+    return (Join-Path (Get-CodexBrowserExtensionStateRoot) 'unpacked')
+}
+
+function Get-CodexChromiumSessionStateRoot {
+    [CmdletBinding()]
+    param()
+
+    return (Join-Path (Get-CodexAuthToolkitRoot) 'state\browser-sessions')
+}
+
+function Get-CodexChromiumSessionRegistryPath {
+    [CmdletBinding()]
+    param()
+
+    return (Join-Path (Get-CodexChromiumSessionStateRoot) 'registry.json')
+}
+
+function Initialize-CodexChromiumSessionState {
+    [CmdletBinding()]
+    param()
+
+    New-Item -ItemType Directory -Path (Get-CodexChromiumSessionStateRoot) -Force | Out-Null
+}
+
+function Get-CodexChromiumSessionRegistry {
+    [CmdletBinding()]
+    param()
+
+    Initialize-CodexChromiumSessionState
+    $path = Get-CodexChromiumSessionRegistryPath
+    if (-not (Test-Path -LiteralPath $path)) {
+        return @()
+    }
+
+    $raw = Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return @()
+    }
+
+    $parsed = $raw | ConvertFrom-Json -Depth 10
+    if ($null -eq $parsed) {
+        return @()
+    }
+
+    return @($parsed)
+}
+
+function Save-CodexChromiumSessionRegistry {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$Entries
+    )
+
+    Initialize-CodexChromiumSessionState
+    ($Entries | ConvertTo-Json -Depth 10) | Set-Content -LiteralPath (Get-CodexChromiumSessionRegistryPath) -Encoding UTF8
+}
+
+function Set-CodexChromiumSessionEntry {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser,
+
+        [Parameter(Mandatory = $true)]
+        [int]$Port,
+
+        [Parameter(Mandatory = $true)]
+        [string]$UserDataDir,
+
+        [string]$ProfileDirectory = 'Default',
+
+        [bool]$UsesManagedProfile = $false
+    )
+
+    $entries = @(Get-CodexChromiumSessionRegistry)
+    $updated = New-Object System.Collections.Generic.List[object]
+    $replaced = $false
+    foreach ($entry in $entries) {
+        if ($entry.browser -eq $Browser -and [int]$entry.port -eq $Port) {
+            [void]$updated.Add([pscustomobject]@{
+                browser = $Browser
+                port = $Port
+                user_data_dir = $UserDataDir
+                profile_directory = $ProfileDirectory
+                uses_managed_profile = $UsesManagedProfile
+                updated_at = (Get-Date).ToString('o')
+            })
+            $replaced = $true
+            continue
+        }
+
+        [void]$updated.Add($entry)
+    }
+
+    if (-not $replaced) {
+        [void]$updated.Add([pscustomobject]@{
+            browser = $Browser
+            port = $Port
+            user_data_dir = $UserDataDir
+            profile_directory = $ProfileDirectory
+            uses_managed_profile = $UsesManagedProfile
+            updated_at = (Get-Date).ToString('o')
+        })
+    }
+
+    Save-CodexChromiumSessionRegistry -Entries $updated.ToArray()
+}
+
+function Get-CodexChromiumSessionEntry {
+    [CmdletBinding()]
+    param(
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser,
+
+        [int]$Port
+    )
+
+    $entries = @(Get-CodexChromiumSessionRegistry)
+    if (-not [string]::IsNullOrWhiteSpace($Browser)) {
+        $entries = @($entries | Where-Object { $_.browser -eq $Browser })
+    }
+
+    if ($Port -gt 0) {
+        $entries = @($entries | Where-Object { [int]$_.port -eq $Port })
+    }
+
+    return @($entries | Select-Object -Last 1)
+}
+
+function Initialize-CodexBrowserExtensionState {
+    [CmdletBinding()]
+    param()
+
+    foreach ($path in @(
+        (Get-CodexBrowserExtensionStateRoot),
+        (Get-CodexBrowserExtensionPackagesRoot),
+        (Get-CodexBrowserExtensionUnpackedRoot)
+    )) {
+        New-Item -ItemType Directory -Path $path -Force | Out-Null
+    }
+}
+
+function Get-CodexBrowserExtensionRegistry {
+    [CmdletBinding()]
+    param()
+
+    Initialize-CodexBrowserExtensionState
+    $path = Get-CodexBrowserExtensionRegistryPath
+    if (-not (Test-Path -LiteralPath $path)) {
+        return @()
+    }
+
+    $raw = Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return @()
+    }
+
+    $parsed = $raw | ConvertFrom-Json -Depth 12
+    if ($null -eq $parsed) {
+        return @()
+    }
+
+    return @($parsed)
+}
+
+function Save-CodexBrowserExtensionRegistry {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$Entries
+    )
+
+    Initialize-CodexBrowserExtensionState
+    $path = Get-CodexBrowserExtensionRegistryPath
+    ($Entries | ConvertTo-Json -Depth 12) | Set-Content -LiteralPath $path -Encoding UTF8
+}
+
+function Resolve-CodexBrowserExtensionEntry {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser
+    )
+
+    $needle = $Name.Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($needle)) {
+        throw 'Extension name must be specified.'
+    }
+
+    $entries = @(Get-CodexBrowserExtensionRegistry)
+    if (-not [string]::IsNullOrWhiteSpace($Browser)) {
+        $entries = @($entries | Where-Object { $_.browser -eq $Browser })
+    }
+
+    $matches = @(
+        $entries | Where-Object {
+            $candidates = @($_.name, $_.slug, $_.manifest_name)
+            foreach ($candidate in $candidates) {
+                if ([string]::IsNullOrWhiteSpace([string]$candidate)) {
+                    continue
+                }
+
+                if ($candidate.Trim().ToLowerInvariant() -eq $needle) {
+                    return $true
+                }
+            }
+
+            return $false
+        }
+    )
+
+    if ($matches.Count -eq 0) {
+        $matches = @(
+            $entries | Where-Object {
+                $candidates = @($_.name, $_.slug, $_.manifest_name)
+                foreach ($candidate in $candidates) {
+                    if ([string]::IsNullOrWhiteSpace([string]$candidate)) {
+                        continue
+                    }
+
+                    if ($candidate.Trim().ToLowerInvariant().Contains($needle)) {
+                        return $true
+                    }
+                }
+
+                return $false
+            }
+        )
+    }
+
+    if ($matches.Count -eq 0) {
+        throw "No browser extension matched '$Name'."
+    }
+
+    if ($matches.Count -gt 1) {
+        $names = @($matches | ForEach-Object { "{0} ({1})" -f $_.name, $_.browser })
+        throw "Multiple browser extensions matched '$Name': $([string]::Join(', ', $names))"
+    }
+
+    return $matches[0]
+}
+
+function Set-CodexBrowserExtensionRegistryEntry {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Entry
+    )
+
+    $entries = @(Get-CodexBrowserExtensionRegistry)
+    $updated = New-Object System.Collections.Generic.List[object]
+    $replaced = $false
+    foreach ($existing in $entries) {
+        if (
+            (-not [string]::IsNullOrWhiteSpace([string]$existing.browser)) -and
+            $existing.browser -eq $Entry.browser -and
+            (
+                (([string]$existing.name).Trim().ToLowerInvariant() -eq ([string]$Entry.name).Trim().ToLowerInvariant()) -or
+                (([string]$existing.slug).Trim().ToLowerInvariant() -eq ([string]$Entry.slug).Trim().ToLowerInvariant())
+            )
+        ) {
+            [void]$updated.Add([pscustomobject]$Entry)
+            $replaced = $true
+            continue
+        }
+
+        [void]$updated.Add($existing)
+    }
+
+    if (-not $replaced) {
+        [void]$updated.Add([pscustomobject]$Entry)
+    }
+
+    Save-CodexBrowserExtensionRegistry -Entries $updated.ToArray()
+    return [pscustomobject]$Entry
+}
+
+function Remove-CodexBrowserExtensionRegistryEntry {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser
+    )
+
+    $entry = Resolve-CodexBrowserExtensionEntry -Name $Name -Browser $Browser
+    $entries = @(
+        Get-CodexBrowserExtensionRegistry | Where-Object {
+            -not (
+                $_.browser -eq $entry.browser -and
+                (
+                    (([string]$_.name).Trim().ToLowerInvariant() -eq ([string]$entry.name).Trim().ToLowerInvariant()) -or
+                    (([string]$_.slug).Trim().ToLowerInvariant() -eq ([string]$entry.slug).Trim().ToLowerInvariant())
+                )
+            )
+        }
+    )
+    Save-CodexBrowserExtensionRegistry -Entries $entries
+    return $entry
+}
+
+function Get-CodexEnabledBrowserExtensionDirectories {
+    [CmdletBinding()]
+    param(
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser = 'edge'
+    )
+
+    $entries = @(Get-CodexBrowserExtensionRegistry | Where-Object { $_.browser -eq $Browser -and $_.enabled })
+    $directories = New-Object System.Collections.Generic.List[string]
+    $seen = @{}
+    foreach ($entry in $entries) {
+        $path = [string]$entry.extension_root
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            continue
+        }
+
+        $resolved = $null
+        try {
+            $resolved = (Resolve-Path -LiteralPath $path -ErrorAction Stop).Path
+        } catch {
+            continue
+        }
+
+        if ([string]::IsNullOrWhiteSpace($resolved)) {
+            continue
+        }
+
+        $key = $resolved.TrimEnd('\').ToLowerInvariant()
+        if ($seen.ContainsKey($key)) {
+            continue
+        }
+
+        $seen[$key] = $true
+        [void]$directories.Add($resolved)
+    }
+
+    return @($directories)
+}
+
+function Get-CodexChromiumExtensionSwitches {
+    [CmdletBinding()]
+    param(
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser = 'edge'
+    )
+
+    $directories = @(Get-CodexEnabledBrowserExtensionDirectories -Browser $Browser)
+    if ($directories.Count -eq 0) {
+        return @()
+    }
+
+    $joined = [string]::Join(',', $directories)
+    return @(
+        "--disable-extensions-except=""$joined""",
+        "--load-extension=""$joined"""
+    )
 }
 
 function Get-CodexAuthIntEnvValue {
@@ -570,7 +966,14 @@ function Start-CodexAuthBrowser {
         [switch]$PassThru
     )
 
+    if ([string]::IsNullOrWhiteSpace($UserDataDir)) {
+        $userDataDir = Get-CodexChromiumUserDataDir -Browser $Browser
+    } else {
+        $userDataDir = $UserDataDir
+    }
+
     if (Test-CodexCdpEndpoint -Port $Port) {
+        Set-CodexChromiumSessionEntry -Browser $Browser -Port $Port -UserDataDir $userDataDir -ProfileDirectory $ProfileDirectory -UsesManagedProfile $false
         $result = [pscustomobject]@{
             Browser          = $Browser
             Port             = $Port
@@ -588,11 +991,6 @@ function Start-CodexAuthBrowser {
     }
 
     $exePath = Get-CodexChromiumExecutable -Browser $Browser
-    if ([string]::IsNullOrWhiteSpace($UserDataDir)) {
-        $userDataDir = Get-CodexChromiumUserDataDir -Browser $Browser
-    } else {
-        $userDataDir = $UserDataDir
-    }
     New-Item -ItemType Directory -Path $userDataDir -Force | Out-Null
     $processName = if ($Browser -eq 'edge') { 'msedge' } else { 'chrome' }
     $running = @(Get-Process -Name $processName -ErrorAction SilentlyContinue)
@@ -606,6 +1004,7 @@ function Start-CodexAuthBrowser {
         Start-Sleep -Seconds 2
     }
 
+    $extensionSwitches = @(Get-CodexChromiumExtensionSwitches -Browser $Browser)
     $arguments = @(
         "--remote-debugging-port=$Port",
         "--user-data-dir=""$userDataDir""",
@@ -621,12 +1020,17 @@ function Start-CodexAuthBrowser {
         '--window-size=1440,1100',
         $Url
     )
+    if ($extensionSwitches.Count -gt 0) {
+        $arguments = @($arguments[0..($arguments.Count - 2)] + $extensionSwitches + $arguments[-1])
+    }
 
     Start-Process -FilePath $exePath -ArgumentList $arguments | Out-Null
 
     if (-not (Wait-CodexCdpEndpoint -Port $Port -TimeoutSeconds 20)) {
         throw "Browser started, but CDP endpoint did not appear on port $Port."
     }
+
+    Set-CodexChromiumSessionEntry -Browser $Browser -Port $Port -UserDataDir $userDataDir -ProfileDirectory $ProfileDirectory -UsesManagedProfile $false
 
     $result = [pscustomobject]@{
         Browser          = $Browser
@@ -661,14 +1065,22 @@ function Ensure-CodexChatGptBrowserSession {
     $resolvedPort = Resolve-CodexChatGptPort -Port $Port
 
     if (Test-CodexCdpEndpoint -Port $resolvedPort) {
+        $sessionEntry = @(Get-CodexChromiumSessionEntry -Browser $resolvedBrowser -Port $resolvedPort) | Select-Object -Last 1
+        $resolvedUserDataDir = ''
+        $usesManagedProfile = $false
+        if ($sessionEntry.Count -gt 0) {
+            $resolvedUserDataDir = [string]$sessionEntry[0].user_data_dir
+            $usesManagedProfile = [bool]$sessionEntry[0].uses_managed_profile
+        }
+
         $result = [pscustomobject]@{
             Browser = $resolvedBrowser
             Port = $resolvedPort
             Url = $Url
             Status = 'AlreadyListening'
             Endpoint = "http://127.0.0.1:$resolvedPort"
-            UserDataDir = ''
-            UsesManagedProfile = $false
+            UserDataDir = $resolvedUserDataDir
+            UsesManagedProfile = $usesManagedProfile
         }
 
         if ($PassThru) {
@@ -692,6 +1104,8 @@ function Ensure-CodexChatGptBrowserSession {
         -AllowConcurrentInstance:$launchPlan.UseManagedUserData `
         -ForceRestart:$ForceRestartBrowser `
         -PassThru
+
+    Set-CodexChromiumSessionEntry -Browser $resolvedBrowser -Port $resolvedPort -UserDataDir $launchPlan.UserDataDir -ProfileDirectory 'Default' -UsesManagedProfile $launchPlan.UseManagedUserData
 
     $result = [pscustomobject]@{
         Browser = $resolvedBrowser
@@ -1397,6 +1811,535 @@ function Remove-CodexChatGptConversation {
     Invoke-CodexAuthHelper -Arguments $arguments
 }
 
+function Test-CodexPathWithinRoot {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Root
+    )
+
+    try {
+        $resolvedRoot = (Resolve-Path -LiteralPath $Root -ErrorAction Stop).Path.TrimEnd('\')
+    } catch {
+        return $false
+    }
+
+    $resolvedPath = $null
+    if (Test-Path -LiteralPath $Path) {
+        try {
+            $resolvedPath = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+        } catch {
+            return $false
+        }
+    } else {
+        $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    }
+
+    $trimmedPath = $resolvedPath.TrimEnd('\')
+    if ($trimmedPath.Equals($resolvedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+
+    return $trimmedPath.StartsWith($resolvedRoot + '\', [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Get-CodexBrowserExtensionRuntimeList {
+    [CmdletBinding()]
+    param(
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser = 'edge',
+
+        [int]$Port = 0,
+
+        [switch]$ForceRestartBrowser
+    )
+
+    $context = Ensure-CodexChatGptBrowserSession -Browser $Browser -Port $Port -Url 'about:blank' -ForceRestartBrowser:$ForceRestartBrowser -PassThru
+    $arguments = @('extension-runtime-list', '--cdp', "http://127.0.0.1:$($context.Port)", '--browser', $Browser)
+    if (-not [string]::IsNullOrWhiteSpace([string]$context.UserDataDir)) {
+        $arguments += @('--user-data-dir', [string]$context.UserDataDir, '--profile-directory', 'Default')
+    }
+    return (Invoke-CodexAuthHelper -Arguments $arguments)
+}
+
+function Resolve-CodexBrowserExtensionRuntimeEntry {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Entry,
+
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser = 'edge',
+
+        [int]$Port = 0,
+
+        [switch]$ForceRestartBrowser
+    )
+
+    $runtime = Get-CodexBrowserExtensionRuntimeList -Browser $Browser -Port $Port -ForceRestartBrowser:$ForceRestartBrowser
+    $entryRoot = [string]$Entry.extension_root
+    $normalizedEntryRoot = if ([string]::IsNullOrWhiteSpace($entryRoot)) { '' } else { $entryRoot.TrimEnd('\').ToLowerInvariant() }
+    $entryName = [string]$Entry.name
+    $manifestName = [string]$Entry.manifest_name
+
+    $matches = @(
+        $runtime.items | Where-Object {
+            $runtimePath = [string]$_.path
+            $normalizedRuntimePath = if ([string]::IsNullOrWhiteSpace($runtimePath)) { '' } else { $runtimePath.TrimEnd('\').ToLowerInvariant() }
+            (
+                (-not [string]::IsNullOrWhiteSpace([string]$_.name) -and $_.name -eq $manifestName) -or
+                (-not [string]::IsNullOrWhiteSpace([string]$_.name) -and $_.name -eq $entryName) -or
+                (-not [string]::IsNullOrWhiteSpace([string]$_.name) -and (([string]$_.name).ToLowerInvariant().Contains($entryName.ToLowerInvariant()))) -or
+                (-not [string]::IsNullOrWhiteSpace($normalizedEntryRoot) -and $normalizedRuntimePath -eq $normalizedEntryRoot)
+            )
+        } | Select-Object -First 1
+    )
+
+    return @($matches)
+}
+
+function Resolve-CodexBrowserExtensionTarget {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Entry,
+
+        [ValidateSet('popup', 'options', 'page')]
+        [string]$Surface = 'popup',
+
+        [string]$PagePath,
+
+        [string]$Url
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($Url)) {
+        return [pscustomobject]@{
+            TargetUrl = $Url
+            PagePath = ''
+            Surface = $Surface
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($PagePath)) {
+        return [pscustomobject]@{
+            TargetUrl = ''
+            PagePath = $PagePath.TrimStart('/')
+            Surface = $Surface
+        }
+    }
+
+    switch ($Surface) {
+        'popup' {
+            if ([string]::IsNullOrWhiteSpace([string]$Entry.popup_path)) {
+                throw "Extension '$($Entry.name)' does not declare a popup page. Pass -PagePath or -Url."
+            }
+
+            return [pscustomobject]@{
+                TargetUrl = ''
+                PagePath = [string]$Entry.popup_path
+                Surface = $Surface
+            }
+        }
+        'options' {
+            if ([string]::IsNullOrWhiteSpace([string]$Entry.options_path)) {
+                throw "Extension '$($Entry.name)' does not declare an options page. Pass -PagePath or -Url."
+            }
+
+            return [pscustomobject]@{
+                TargetUrl = ''
+                PagePath = [string]$Entry.options_path
+                Surface = $Surface
+            }
+        }
+        default {
+            throw "Surface '$Surface' requires -PagePath or -Url."
+        }
+    }
+}
+
+function Install-CodexBrowserExtension {
+    [CmdletBinding(DefaultParameterSetName = 'Url')]
+    param(
+        [Parameter(Mandatory = $true, ParameterSetName = 'Url')]
+        [string]$SourceUrl,
+
+        [Parameter(Mandatory = $true, ParameterSetName = 'Package')]
+        [string]$PackagePath,
+
+        [Parameter(Mandatory = $true, ParameterSetName = 'Directory')]
+        [string]$DirectoryPath,
+
+        [string]$Name,
+
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser = 'edge',
+
+        [switch]$Disabled,
+
+        [switch]$Force,
+
+        [switch]$RestartBrowser
+    )
+
+    Initialize-CodexBrowserExtensionState
+
+    $arguments = @(
+        'extension-install',
+        '--extensions-root', (Get-CodexBrowserExtensionStateRoot),
+        '--browser', $Browser
+    )
+    if (-not [string]::IsNullOrWhiteSpace($Name)) {
+        $arguments += @('--name', $Name)
+    }
+    if ($Force) {
+        $arguments += '--overwrite'
+    }
+
+    switch ($PSCmdlet.ParameterSetName) {
+        'Url' {
+            $arguments += @('--source-url', $SourceUrl)
+        }
+        'Package' {
+            $resolvedPackagePath = (Resolve-Path -LiteralPath $PackagePath -ErrorAction Stop).Path
+            $arguments += @('--package-path', $resolvedPackagePath)
+        }
+        'Directory' {
+            $resolvedDirectoryPath = (Resolve-Path -LiteralPath $DirectoryPath -ErrorAction Stop).Path
+            $arguments += @('--directory-path', $resolvedDirectoryPath)
+        }
+    }
+
+    $result = Invoke-CodexAuthHelper -Arguments $arguments
+    $manifest = $result.manifest
+    $entry = @{
+        name = [string]$result.name
+        slug = [string]$result.slug
+        browser = $Browser
+        enabled = (-not $Disabled)
+        source_url = [string]$result.source_url
+        package_path = [string]$result.package_path
+        extension_root = [string]$result.extension_root
+        installed_at = (Get-Date).ToString('o')
+        manifest_name = [string]$manifest.name
+        manifest_version = [string]$manifest.version
+        manifest_version_number = [int]$manifest.manifest_version
+        popup_path = [string]$manifest.popup_path
+        options_path = [string]$manifest.options_path
+        homepage_url = [string]$manifest.homepage_url
+        description = [string]$manifest.description
+    }
+    $savedEntry = Set-CodexBrowserExtensionRegistryEntry -Entry $entry
+
+    $browserRestart = $null
+    if ($RestartBrowser) {
+        $browserRestart = Ensure-CodexChatGptBrowserSession -Browser $Browser -Port 0 -Url 'about:blank' -ForceRestartBrowser -PassThru
+    }
+
+    return [pscustomobject]@{
+        status = 'installed'
+        extension = $savedEntry
+        browser_restart = $browserRestart
+        restart_recommended = (-not $RestartBrowser)
+    }
+}
+
+function Get-CodexBrowserExtensions {
+    [CmdletBinding()]
+    param(
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser,
+
+        [switch]$EnabledOnly,
+
+        [switch]$IncludeRuntime,
+
+        [int]$Port = 0,
+
+        [switch]$ForceRestartBrowser
+    )
+
+    $entries = @(Get-CodexBrowserExtensionRegistry)
+    if (-not [string]::IsNullOrWhiteSpace($Browser)) {
+        $entries = @($entries | Where-Object { $_.browser -eq $Browser })
+    }
+    if ($EnabledOnly) {
+        $entries = @($entries | Where-Object { $_.enabled })
+    }
+
+    $items = New-Object System.Collections.Generic.List[object]
+    foreach ($entry in $entries) {
+        $copy = [ordered]@{}
+        foreach ($property in $entry.PSObject.Properties) {
+            $copy[$property.Name] = $property.Value
+        }
+        [void]$items.Add([pscustomobject]$copy)
+    }
+
+    $runtime = $null
+    if ($IncludeRuntime -and (-not [string]::IsNullOrWhiteSpace($Browser))) {
+        $runtime = Get-CodexBrowserExtensionRuntimeList -Browser $Browser -Port $Port -ForceRestartBrowser:$ForceRestartBrowser
+        foreach ($item in $items) {
+            $normalizedEntryRoot = if ([string]::IsNullOrWhiteSpace([string]$item.extension_root)) { '' } else { ([string]$item.extension_root).TrimEnd('\').ToLowerInvariant() }
+            $runtimeMatch = @($runtime.items | Where-Object {
+                $normalizedRuntimePath = if ([string]::IsNullOrWhiteSpace([string]$_.path)) { '' } else { ([string]$_.path).TrimEnd('\').ToLowerInvariant() }
+                $_.name -eq $item.manifest_name -or
+                $_.name -eq $item.name -or
+                (([string]$_.name).ToLowerInvariant().Contains(([string]$item.name).ToLowerInvariant())) -or
+                (-not [string]::IsNullOrWhiteSpace($normalizedEntryRoot) -and $normalizedRuntimePath -eq $normalizedEntryRoot)
+            } | Select-Object -First 1)
+
+            if ($runtimeMatch.Count -gt 0) {
+                $item | Add-Member -NotePropertyName runtime_id -NotePropertyValue $runtimeMatch[0].id -Force
+                $item | Add-Member -NotePropertyName runtime_name -NotePropertyValue $runtimeMatch[0].name -Force
+                $item | Add-Member -NotePropertyName runtime_enabled -NotePropertyValue $runtimeMatch[0].enabled -Force
+                $item | Add-Member -NotePropertyName runtime_path -NotePropertyValue $runtimeMatch[0].path -Force
+                $item | Add-Member -NotePropertyName runtime_source -NotePropertyValue $runtimeMatch[0].source -Force
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        count = $items.Count
+        items = $items.ToArray()
+        runtime = $runtime
+    }
+}
+
+function Enable-CodexBrowserExtension {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser,
+
+        [switch]$RestartBrowser
+    )
+
+    $entry = Resolve-CodexBrowserExtensionEntry -Name $Name -Browser $Browser
+    $updated = @{
+        name = [string]$entry.name
+        slug = [string]$entry.slug
+        browser = [string]$entry.browser
+        enabled = $true
+        source_url = [string]$entry.source_url
+        package_path = [string]$entry.package_path
+        extension_root = [string]$entry.extension_root
+        installed_at = [string]$entry.installed_at
+        manifest_name = [string]$entry.manifest_name
+        manifest_version = [string]$entry.manifest_version
+        manifest_version_number = [int]$entry.manifest_version_number
+        popup_path = [string]$entry.popup_path
+        options_path = [string]$entry.options_path
+        homepage_url = [string]$entry.homepage_url
+        description = [string]$entry.description
+    }
+    $saved = Set-CodexBrowserExtensionRegistryEntry -Entry $updated
+    if ($RestartBrowser) {
+        Ensure-CodexChatGptBrowserSession -Browser $saved.browser -Port 0 -Url 'about:blank' -ForceRestartBrowser -PassThru | Out-Null
+    }
+
+    return [pscustomobject]@{
+        status = 'enabled'
+        extension = $saved
+    }
+}
+
+function Disable-CodexBrowserExtension {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser,
+
+        [switch]$RestartBrowser
+    )
+
+    $entry = Resolve-CodexBrowserExtensionEntry -Name $Name -Browser $Browser
+    $updated = @{
+        name = [string]$entry.name
+        slug = [string]$entry.slug
+        browser = [string]$entry.browser
+        enabled = $false
+        source_url = [string]$entry.source_url
+        package_path = [string]$entry.package_path
+        extension_root = [string]$entry.extension_root
+        installed_at = [string]$entry.installed_at
+        manifest_name = [string]$entry.manifest_name
+        manifest_version = [string]$entry.manifest_version
+        manifest_version_number = [int]$entry.manifest_version_number
+        popup_path = [string]$entry.popup_path
+        options_path = [string]$entry.options_path
+        homepage_url = [string]$entry.homepage_url
+        description = [string]$entry.description
+    }
+    $saved = Set-CodexBrowserExtensionRegistryEntry -Entry $updated
+    if ($RestartBrowser) {
+        Ensure-CodexChatGptBrowserSession -Browser $saved.browser -Port 0 -Url 'about:blank' -ForceRestartBrowser -PassThru | Out-Null
+    }
+
+    return [pscustomobject]@{
+        status = 'disabled'
+        extension = $saved
+    }
+}
+
+function Remove-CodexBrowserExtension {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser,
+
+        [switch]$RestartBrowser
+    )
+
+    $entry = Resolve-CodexBrowserExtensionEntry -Name $Name -Browser $Browser
+    $stateRoot = Get-CodexBrowserExtensionStateRoot
+    foreach ($candidatePath in @([string]$entry.extension_root, [string]$entry.package_path)) {
+        if ([string]::IsNullOrWhiteSpace($candidatePath) -or -not (Test-Path -LiteralPath $candidatePath)) {
+            continue
+        }
+
+        if (-not (Test-CodexPathWithinRoot -Path $candidatePath -Root $stateRoot)) {
+            throw "Refusing to delete path outside the browser extension state root: $candidatePath"
+        }
+
+        Remove-Item -LiteralPath $candidatePath -Recurse -Force -ErrorAction Stop
+    }
+
+    $removed = Remove-CodexBrowserExtensionRegistryEntry -Name $Name -Browser $Browser
+    if ($RestartBrowser) {
+        Ensure-CodexChatGptBrowserSession -Browser $removed.browser -Port 0 -Url 'about:blank' -ForceRestartBrowser -PassThru | Out-Null
+    }
+
+    return [pscustomobject]@{
+        status = 'removed'
+        extension = $removed
+    }
+}
+
+function Open-CodexBrowserExtension {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [ValidateSet('popup', 'options', 'page')]
+        [string]$Surface = 'popup',
+
+        [string]$PagePath,
+
+        [string]$Url,
+
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser = 'edge',
+
+        [int]$Port = 0,
+
+        [switch]$ForceRestartBrowser
+    )
+
+    $entry = Resolve-CodexBrowserExtensionEntry -Name $Name -Browser $Browser
+    $target = Resolve-CodexBrowserExtensionTarget -Entry $entry -Surface $Surface -PagePath $PagePath -Url $Url
+    $context = Ensure-CodexChatGptBrowserSession -Browser $Browser -Port $Port -Url 'about:blank' -ForceRestartBrowser:$ForceRestartBrowser -PassThru
+    $resolvedExtensionName = if ([string]::IsNullOrWhiteSpace([string]$entry.manifest_name)) { [string]$entry.name } else { [string]$entry.manifest_name }
+    $runtimeEntry = @(Resolve-CodexBrowserExtensionRuntimeEntry -Entry $entry -Browser $Browser -Port $context.Port -ForceRestartBrowser:$ForceRestartBrowser) | Select-Object -First 1
+    $arguments = @(
+        'extension-open',
+        '--cdp', "http://127.0.0.1:$($context.Port)",
+        '--browser', $Browser
+    )
+    if ($runtimeEntry -and -not [string]::IsNullOrWhiteSpace([string]$runtimeEntry.id)) {
+        $arguments += @('--extension-id', [string]$runtimeEntry.id)
+    } else {
+        $arguments += @('--name', $resolvedExtensionName)
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string]$context.UserDataDir)) {
+        $arguments += @('--user-data-dir', [string]$context.UserDataDir, '--profile-directory', 'Default')
+    }
+    if (-not [string]::IsNullOrWhiteSpace($target.TargetUrl)) {
+        $arguments += @('--url', $target.TargetUrl)
+    } else {
+        $arguments += @('--page-path', $target.PagePath)
+    }
+
+    return (Invoke-CodexAuthHelper -Arguments $arguments)
+}
+
+function Invoke-CodexBrowserExtensionClick {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [ValidateSet('popup', 'options', 'page')]
+        [string]$Surface = 'popup',
+
+        [string]$PagePath,
+
+        [string]$Url,
+
+        [string]$Selector,
+
+        [string]$TextContains,
+
+        [int]$TimeoutMilliseconds = 5000,
+
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser = 'edge',
+
+        [int]$Port = 0,
+
+        [switch]$ForceRestartBrowser
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Selector) -and [string]::IsNullOrWhiteSpace($TextContains)) {
+        throw 'Provide -Selector or -TextContains.'
+    }
+
+    $entry = Resolve-CodexBrowserExtensionEntry -Name $Name -Browser $Browser
+    $target = Resolve-CodexBrowserExtensionTarget -Entry $entry -Surface $Surface -PagePath $PagePath -Url $Url
+    $context = Ensure-CodexChatGptBrowserSession -Browser $Browser -Port $Port -Url 'about:blank' -ForceRestartBrowser:$ForceRestartBrowser -PassThru
+    $resolvedExtensionName = if ([string]::IsNullOrWhiteSpace([string]$entry.manifest_name)) { [string]$entry.name } else { [string]$entry.manifest_name }
+    $runtimeEntry = @(Resolve-CodexBrowserExtensionRuntimeEntry -Entry $entry -Browser $Browser -Port $context.Port -ForceRestartBrowser:$ForceRestartBrowser) | Select-Object -First 1
+    $arguments = @(
+        'extension-click',
+        '--cdp', "http://127.0.0.1:$($context.Port)",
+        '--browser', $Browser,
+        '--timeout-ms', $TimeoutMilliseconds.ToString()
+    )
+    if ($runtimeEntry -and -not [string]::IsNullOrWhiteSpace([string]$runtimeEntry.id)) {
+        $arguments += @('--extension-id', [string]$runtimeEntry.id)
+    } else {
+        $arguments += @('--name', $resolvedExtensionName)
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string]$context.UserDataDir)) {
+        $arguments += @('--user-data-dir', [string]$context.UserDataDir, '--profile-directory', 'Default')
+    }
+    if (-not [string]::IsNullOrWhiteSpace($target.TargetUrl)) {
+        $arguments += @('--url', $target.TargetUrl)
+    } else {
+        $arguments += @('--page-path', $target.PagePath)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Selector)) {
+        $arguments += @('--selector', $Selector)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TextContains)) {
+        $arguments += @('--text-contains', $TextContains)
+    }
+
+    return (Invoke-CodexAuthHelper -Arguments $arguments)
+}
+
 function New-CodexMoodleSpec {
     [CmdletBinding()]
     param(
@@ -1547,6 +2490,21 @@ Codex web-auth helpers
    auth-chatgpt-ask -NewChat -DestinationDir C:\Exports -PromptPath C:\Prompts\ask.txt
    auth-chatgpt-ask -NewChat -DestinationDir C:\Exports -TimeoutSeconds 120 -MaxTotalSeconds 0 "Write a long, detailed answer without cutting off early."
 
+11. Browser extension helpers:
+   auth-extension-install -SourceUrl https://example.com/extensions/my-extension.zip -Name MyExtension
+   auth-extension-install -DirectoryPath C:\Ext\MyExtension -Name MyExtension
+   auth-extension-install -PackagePath C:\Downloads\extension.zip -Name MyExtension
+   auth-extension-list
+   auth-extension-list -Browser edge -IncludeRuntime
+   auth-extension-enable -Name MyExtension
+   auth-extension-disable -Name MyExtension
+   auth-extension-open -Name MyExtension -Surface popup
+   auth-extension-open -Name MyExtension -Surface options
+   auth-extension-click -Name MyExtension -Surface popup -TextContains "Sign in"
+   auth-extension-click -Name MyExtension -Surface page -PagePath popup.html -Selector "button.primary"
+   auth-extension-remove -Name MyExtension
+   Enabled extensions are loaded together into the managed browser session, so multiple browser plugins can cooperate in one automation run.
+
 9. ChatGPT safety note:
    Broad keywords and -SaveAll can touch too many conversations too quickly.
    That may trigger temporary ChatGPT protections or temporary closures.
@@ -1597,4 +2555,11 @@ Set-Alias -Name auth-chatgpt-open -Value Open-CodexChatGptConversation -Scope Gl
 Set-Alias -Name auth-chatgpt-save -Value Save-CodexChatGptConversation -Scope Global -Option AllScope -Force
 Set-Alias -Name auth-chatgpt-ask -Value Invoke-CodexChatGptPrompt -Scope Global -Option AllScope -Force
 Set-Alias -Name auth-chatgpt-delete -Value Remove-CodexChatGptConversation -Scope Global -Option AllScope -Force
+Set-Alias -Name auth-extension-install -Value Install-CodexBrowserExtension -Scope Global -Option AllScope -Force
+Set-Alias -Name auth-extension-list -Value Get-CodexBrowserExtensions -Scope Global -Option AllScope -Force
+Set-Alias -Name auth-extension-enable -Value Enable-CodexBrowserExtension -Scope Global -Option AllScope -Force
+Set-Alias -Name auth-extension-disable -Value Disable-CodexBrowserExtension -Scope Global -Option AllScope -Force
+Set-Alias -Name auth-extension-open -Value Open-CodexBrowserExtension -Scope Global -Option AllScope -Force
+Set-Alias -Name auth-extension-click -Value Invoke-CodexBrowserExtensionClick -Scope Global -Option AllScope -Force
+Set-Alias -Name auth-extension-remove -Value Remove-CodexBrowserExtension -Scope Global -Option AllScope -Force
 Set-Alias -Name auth-help -Value Show-CodexAuthHelp -Scope Global -Option AllScope -Force

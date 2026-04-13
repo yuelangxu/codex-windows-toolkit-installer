@@ -1,10 +1,13 @@
 import argparse
+import io
 import json
 import os
 import random
 import re
+import shutil
 import sys
 import time
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
@@ -92,6 +95,120 @@ def ensure_existing_directory(path_value: str, label: str) -> Path:
     if not path.is_dir():
         raise RuntimeError(f"{label} is not a directory: {path}")
     return path
+
+
+def ensure_directory(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def slugify_extension_name(name: str) -> str:
+    value = sanitize(name or "extension", max_len=80).lower()
+    value = re.sub(r"[^a-z0-9._-]+", "-", value)
+    value = value.strip("._-")
+    return value or "extension"
+
+
+def get_browser_extensions_manager_url(browser: str) -> str:
+    return "edge://extensions/" if clean_text(browser).lower() == "edge" else "chrome://extensions/"
+
+
+def ensure_clean_directory(path: Path, overwrite: bool = False) -> Path:
+    if path.exists():
+        if not overwrite:
+            raise RuntimeError(f"Path already exists: {path}")
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def find_extension_manifest_root(search_root: Path) -> Path:
+    direct_manifest = search_root / "manifest.json"
+    if direct_manifest.exists():
+        return search_root
+
+    manifests = [
+        manifest
+        for manifest in search_root.rglob("manifest.json")
+        if "__MACOSX" not in manifest.parts and ".git" not in manifest.parts and "node_modules" not in manifest.parts
+    ]
+    if not manifests:
+        raise RuntimeError(f"No manifest.json was found under {search_root}")
+
+    manifests.sort(key=lambda item: (len(item.relative_to(search_root).parts), len(str(item))))
+    return manifests[0].parent
+
+
+def inspect_browser_extension_manifest(extension_root: Path) -> Dict[str, Any]:
+    manifest_path = extension_root / "manifest.json"
+    if not manifest_path.exists():
+        raise RuntimeError(f"manifest.json is missing from {extension_root}")
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    action = manifest.get("action") or manifest.get("browser_action") or manifest.get("page_action") or {}
+    options_ui = manifest.get("options_ui") or {}
+    return {
+        "name": clean_text(str(manifest.get("name") or "")),
+        "version": clean_text(str(manifest.get("version") or "")),
+        "manifest_version": int(manifest.get("manifest_version") or 0),
+        "description": clean_text(str(manifest.get("description") or "")),
+        "popup_path": clean_text(str(action.get("default_popup") or "")),
+        "options_path": clean_text(str(options_ui.get("page") or manifest.get("options_page") or "")),
+        "homepage_url": clean_text(str(manifest.get("homepage_url") or "")),
+        "manifest_path": str(manifest_path),
+    }
+
+
+def download_extension_package(url: str, packages_root: Path, slug: str) -> Path:
+    ensure_directory(packages_root)
+    response = requests.get(url, stream=True, timeout=180)
+    response.raise_for_status()
+    fallback_name = sanitize(Path(urlparse(url).path).name or f"{slug}.zip")
+    output_name = filename_from_response(url, dict(response.headers), fallback_name)
+    destination = packages_root / output_name
+    with destination.open("wb") as handle:
+        for chunk in response.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                handle.write(chunk)
+    return destination
+
+
+def extract_crx_payload(package_path: Path) -> bytes:
+    payload = package_path.read_bytes()
+    if payload[:4] != b"Cr24":
+        raise RuntimeError(f"Not a valid Chromium CRX archive: {package_path}")
+
+    version = int.from_bytes(payload[4:8], "little")
+    if version == 3:
+        header_size = int.from_bytes(payload[8:12], "little")
+        zip_start = 12 + header_size
+    elif version == 2:
+        public_key_size = int.from_bytes(payload[8:12], "little")
+        signature_size = int.from_bytes(payload[12:16], "little")
+        zip_start = 16 + public_key_size + signature_size
+    else:
+        raise RuntimeError(f"Unsupported CRX version {version} in {package_path}")
+
+    return payload[zip_start:]
+
+
+def unpack_extension_archive(package_path: Path, destination_root: Path) -> None:
+    suffix = package_path.suffix.lower()
+    if suffix == ".zip":
+        with zipfile.ZipFile(package_path) as archive:
+            archive.extractall(destination_root)
+        return
+
+    if suffix == ".crx":
+        zip_payload = extract_crx_payload(package_path)
+        with zipfile.ZipFile(io.BytesIO(zip_payload)) as archive:
+            archive.extractall(destination_root)
+        return
+
+    raise RuntimeError(f"Unsupported extension package type: {package_path.suffix}")
 
 
 def write_shortcut(path: Path, url: str) -> None:
@@ -206,6 +323,263 @@ def choose_page(context, page_url_contains: Optional[str] = None, require_existi
         raise RuntimeError("No existing page found in the connected browser context.")
 
     return context.new_page(), True
+
+
+def read_profile_runtime_browser_extensions(user_data_dir: str, profile_directory: str = "Default") -> List[Dict[str, Any]]:
+    if not clean_text(user_data_dir):
+        return []
+
+    base_dir = Path(user_data_dir).expanduser().resolve()
+    settings_by_id: Dict[str, Dict[str, Any]] = {}
+    candidate_files = [
+        base_dir / profile_directory / "Secure Preferences",
+        base_dir / profile_directory / "Preferences",
+    ]
+
+    for candidate in candidate_files:
+        if not candidate.exists():
+            continue
+        try:
+            payload = json.loads(candidate.read_text(encoding="utf-8-sig"))
+        except Exception:
+            continue
+
+        extension_settings = ((payload.get("extensions") or {}).get("settings") or {})
+        if not isinstance(extension_settings, dict):
+            continue
+
+        for extension_id, entry in extension_settings.items():
+            if not isinstance(entry, dict):
+                continue
+            settings_by_id[str(extension_id)] = entry
+
+    results: List[Dict[str, Any]] = []
+    for extension_id, entry in settings_by_id.items():
+        manifest = entry.get("manifest") or {}
+        disable_reasons = entry.get("disable_reasons") or []
+        enabled: Optional[bool] = None
+        state_value = entry.get("state")
+        if isinstance(state_value, (int, float)):
+            enabled = int(state_value) != 0
+        elif isinstance(entry.get("enabled"), bool):
+            enabled = bool(entry.get("enabled"))
+        elif isinstance(disable_reasons, list):
+            enabled = len(disable_reasons) == 0
+
+        results.append(
+            {
+                "id": clean_text(extension_id),
+                "name": clean_text(str(manifest.get("name") or entry.get("name") or "")),
+                "version": clean_text(str(manifest.get("version") or entry.get("version") or "")),
+                "enabled": enabled,
+                "description": clean_text(str(manifest.get("description") or entry.get("description") or "")),
+                "homepage_url": clean_text(str(manifest.get("homepage_url") or entry.get("homepage_url") or "")),
+                "options_page": clean_text(str(manifest.get("options_page") or entry.get("options_page") or "")),
+                "path": clean_text(str(entry.get("path") or "")),
+                "source": "profile_preferences",
+            }
+        )
+
+    deduped: List[Dict[str, Any]] = []
+    seen = set()
+    for item in results:
+        key = item["id"] or item["name"].lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def list_runtime_browser_extensions(
+    page,
+    browser: str,
+    user_data_dir: str = "",
+    profile_directory: str = "Default",
+) -> List[Dict[str, Any]]:
+    manager_url = get_browser_extensions_manager_url(browser)
+    raw_items = []
+    try:
+        page.goto(manager_url, wait_until="domcontentloaded", timeout=120000)
+        page.wait_for_timeout(1200)
+        raw_items = page.evaluate(
+            """() => {
+                const items = [];
+                const seenRoots = new Set();
+                const queue = [document];
+                while (queue.length) {
+                    const root = queue.shift();
+                    if (!root || seenRoots.has(root)) {
+                        continue;
+                    }
+                    seenRoots.add(root);
+                    if (!root.querySelectorAll) {
+                        continue;
+                    }
+                    for (const item of root.querySelectorAll('extensions-item')) {
+                        items.push(item);
+                    }
+                    for (const element of root.querySelectorAll('*')) {
+                        if (element.shadowRoot) {
+                            queue.push(element.shadowRoot);
+                        }
+                    }
+                }
+
+                const readText = (root, selectors) => {
+                    if (!root) {
+                        return '';
+                    }
+                    for (const selector of selectors) {
+                        const node = root.querySelector(selector);
+                        if (node) {
+                            const text = (node.innerText || node.textContent || '').trim();
+                            if (text) {
+                                return text;
+                            }
+                        }
+                    }
+                    return '';
+                };
+
+                return items.map(item => {
+                    const data = item.data || item.item || item.__data || item.data_ || {};
+                    const shadow = item.shadowRoot;
+                    let enabled = null;
+                    if (typeof data.state !== 'undefined') {
+                        enabled = Number(data.state) !== 0;
+                    } else if (typeof data.enabled !== 'undefined') {
+                        enabled = !!data.enabled;
+                    }
+
+                    const id = String(data.id || item.getAttribute('id') || item.dataset.extensionId || '').trim();
+                    const name = String(data.name || readText(shadow, ['#name', '.name', '[id=\"name\"]']) || '').trim();
+                    const version = String(data.version || '').trim();
+                    const description = String(data.description || readText(shadow, ['#description', '.description']) || '').trim();
+                    const homepageUrl = String(data.homePage || data.homepageUrl || '').trim();
+                    const optionsPage = String(data.optionsPage || data.optionsUrl || '').trim();
+                    return {
+                        id,
+                        name,
+                        version,
+                        enabled,
+                        description,
+                        homepage_url: homepageUrl,
+                        options_page: optionsPage,
+                        source: 'manager_page',
+                    };
+                }).filter(item => item.id || item.name);
+            }"""
+        )
+    except Exception:
+        raw_items = []
+
+    results: List[Dict[str, Any]] = []
+    seen = set()
+    for item in raw_items or []:
+        normalized = {
+            "id": clean_text(str(item.get("id") or "")),
+            "name": clean_text(str(item.get("name") or "")),
+            "version": clean_text(str(item.get("version") or "")),
+            "enabled": item.get("enabled"),
+            "description": clean_text(str(item.get("description") or "")),
+            "homepage_url": clean_text(str(item.get("homepage_url") or "")),
+            "options_page": clean_text(str(item.get("options_page") or "")),
+            "source": clean_text(str(item.get("source") or "manager_page")),
+        }
+        key = normalized["id"] or normalized["name"].lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        results.append(normalized)
+
+    for item in read_profile_runtime_browser_extensions(user_data_dir, profile_directory):
+        key = item["id"] or item["name"].lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        results.append(item)
+    return results
+
+
+def find_runtime_browser_extension(
+    entries: List[Dict[str, Any]],
+    extension_id: str = "",
+    name: str = "",
+) -> Dict[str, Any]:
+    if extension_id:
+        needle = clean_text(extension_id).lower()
+        for entry in entries:
+            if clean_text(entry.get("id") or "").lower() == needle:
+                return entry
+        raise RuntimeError(f"No browser extension matched id {extension_id}")
+
+    if name:
+        exact = clean_text(name).lower()
+        exact_matches = [entry for entry in entries if clean_text(entry.get("name") or "").lower() == exact]
+        if exact_matches:
+            return exact_matches[0]
+
+        contains_matches = [entry for entry in entries if exact and exact in clean_text(entry.get("name") or "").lower()]
+        if contains_matches:
+            return contains_matches[0]
+
+    raise RuntimeError("No browser extension matched the requested name or id.")
+
+
+def build_runtime_extension_url(extension_id: str, page_path: str = "", url: str = "") -> str:
+    if url:
+        return url
+
+    normalized_path = clean_text(page_path).lstrip("/")
+    if not normalized_path:
+        raise RuntimeError("An extension page path or URL is required.")
+    return f"chrome-extension://{extension_id}/{normalized_path}"
+
+
+def find_visible_page_control(page, selector: str = "", text_contains: str = ""):
+    if selector:
+        locator = page.locator(selector)
+        if locator.count() == 0:
+            raise RuntimeError(f"No element matched selector: {selector}")
+        return locator.first, selector
+
+    needle = clean_text(text_contains).lower()
+    if not needle:
+        raise RuntimeError("A selector or visible text fragment is required.")
+
+    selectors = [
+        "button",
+        "[role='button']",
+        "a",
+        "summary",
+        "input[type='button']",
+        "input[type='submit']",
+    ]
+    for selector in selectors:
+        locator = page.locator(selector)
+        count = min(locator.count(), 80)
+        for index in range(count):
+            candidate = locator.nth(index)
+            try:
+                if not candidate.is_visible(timeout=300):
+                    continue
+                label = clean_text(
+                    " ".join(
+                        [
+                            candidate.get_attribute("aria-label") or "",
+                            candidate.get_attribute("title") or "",
+                            candidate.get_attribute("value") or "",
+                            candidate.inner_text(timeout=500) or "",
+                        ]
+                    )
+                )
+                if label and needle in label.lower():
+                    return candidate, label
+            except Exception:
+                continue
+
+    raise RuntimeError(f"No visible control contained text: {text_contains}")
 
 
 def normalize_links(raw_links: List[Dict[str, str]]) -> List[Dict[str, str]]:
@@ -3685,6 +4059,160 @@ def infer_spec(page, site: str, limit: Optional[int] = None) -> Dict[str, Any]:
     return spec
 
 
+def cmd_extension_install(args) -> Dict[str, Any]:
+    extensions_root = ensure_directory(Path(args.extensions_root).expanduser().resolve())
+    packages_root = ensure_directory(extensions_root / "packages" / args.browser)
+    unpacked_root = ensure_directory(extensions_root / "unpacked" / args.browser)
+
+    source_count = sum(
+        1
+        for value in [clean_text(args.source_url or ""), clean_text(args.package_path or ""), clean_text(args.directory_path or "")]
+        if value
+    )
+    if source_count != 1:
+        raise RuntimeError("Use exactly one extension source: --source-url, --package-path, or --directory-path.")
+
+    requested_name = clean_text(args.name or "")
+    source_label = requested_name or Path(clean_text(args.package_path or args.directory_path or args.source_url or "")).stem or "extension"
+    slug = slugify_extension_name(source_label)
+
+    package_store_dir = packages_root / slug
+    unpacked_store_dir = unpacked_root / slug
+    ensure_clean_directory(package_store_dir, overwrite=args.overwrite)
+    ensure_clean_directory(unpacked_store_dir, overwrite=args.overwrite)
+
+    stored_package_path = ""
+    if args.source_url:
+        downloaded_path = download_extension_package(args.source_url, package_store_dir, slug)
+        unpack_extension_archive(downloaded_path, unpacked_store_dir)
+        stored_package_path = str(downloaded_path)
+    elif args.package_path:
+        source_package_path = Path(args.package_path).expanduser().resolve()
+        if not source_package_path.exists():
+            raise RuntimeError(f"Package path does not exist: {source_package_path}")
+        package_copy_path = package_store_dir / source_package_path.name
+        shutil.copy2(source_package_path, package_copy_path)
+        unpack_extension_archive(package_copy_path, unpacked_store_dir)
+        stored_package_path = str(package_copy_path)
+    elif args.directory_path:
+        source_directory_path = Path(args.directory_path).expanduser().resolve()
+        if not source_directory_path.exists():
+            raise RuntimeError(f"Directory path does not exist: {source_directory_path}")
+        if not source_directory_path.is_dir():
+            raise RuntimeError(f"Directory path is not a directory: {source_directory_path}")
+        shutil.copytree(source_directory_path, unpacked_store_dir, dirs_exist_ok=True)
+    else:
+        raise RuntimeError("Provide --source-url, --package-path, or --directory-path.")
+
+    extension_root = find_extension_manifest_root(unpacked_store_dir)
+    manifest = inspect_browser_extension_manifest(extension_root)
+    extension_name = requested_name or manifest["name"] or slug
+
+    return {
+        "status": "installed",
+        "name": extension_name,
+        "slug": slug,
+        "browser": args.browser,
+        "source_url": clean_text(args.source_url or ""),
+        "package_path": stored_package_path,
+        "extension_root": str(extension_root),
+        "manifest": manifest,
+    }
+
+
+def cmd_extension_runtime_list(args) -> Dict[str, Any]:
+    playwright, browser = connect_browser(args.cdp)
+    try:
+        context = choose_context(browser)
+        page = context.new_page()
+        try:
+            ensure_chatgpt_runtime_resilience(page)
+            items = list_runtime_browser_extensions(
+                page,
+                args.browser,
+                user_data_dir=clean_text(args.user_data_dir or ""),
+                profile_directory=clean_text(args.profile_directory or "") or "Default",
+            )
+            return {
+                "status": "ok",
+                "browser": args.browser,
+                "count": len(items),
+                "items": items,
+            }
+        finally:
+            page.close()
+    finally:
+        browser.close()
+        playwright.stop()
+
+
+def cmd_extension_open(args) -> Dict[str, Any]:
+    playwright, browser = connect_browser(args.cdp)
+    try:
+        context = choose_context(browser)
+        page = context.new_page()
+        try:
+            ensure_chatgpt_runtime_resilience(page)
+            runtime_entries = list_runtime_browser_extensions(
+                page,
+                args.browser,
+                user_data_dir=clean_text(args.user_data_dir or ""),
+                profile_directory=clean_text(args.profile_directory or "") or "Default",
+            )
+            runtime_entry = find_runtime_browser_extension(runtime_entries, extension_id=args.extension_id, name=args.name)
+            target_url = build_runtime_extension_url(runtime_entry["id"], page_path=args.page_path, url=args.url)
+            page.goto(target_url, wait_until="domcontentloaded", timeout=120000)
+            page.wait_for_timeout(900)
+            return {
+                "status": "ok",
+                "browser": args.browser,
+                "extension": runtime_entry,
+                "url": page.url,
+                "title": clean_text(page.title() or ""),
+            }
+        finally:
+            page.close()
+    finally:
+        browser.close()
+        playwright.stop()
+
+
+def cmd_extension_click(args) -> Dict[str, Any]:
+    playwright, browser = connect_browser(args.cdp)
+    try:
+        context = choose_context(browser)
+        page = context.new_page()
+        try:
+            ensure_chatgpt_runtime_resilience(page)
+            runtime_entries = list_runtime_browser_extensions(
+                page,
+                args.browser,
+                user_data_dir=clean_text(args.user_data_dir or ""),
+                profile_directory=clean_text(args.profile_directory or "") or "Default",
+            )
+            runtime_entry = find_runtime_browser_extension(runtime_entries, extension_id=args.extension_id, name=args.name)
+            target_url = build_runtime_extension_url(runtime_entry["id"], page_path=args.page_path, url=args.url)
+            page.goto(target_url, wait_until="domcontentloaded", timeout=120000)
+            page.wait_for_timeout(900)
+            locator, matched_label = find_visible_page_control(page, selector=args.selector or "", text_contains=args.text_contains or "")
+            click_mode = safe_click(locator, timeout=max(args.timeout_ms, 1000), reason="extension_click")
+            page.wait_for_timeout(800)
+            return {
+                "status": "ok",
+                "browser": args.browser,
+                "extension": runtime_entry,
+                "click_mode": click_mode,
+                "matched_label": matched_label,
+                "url": page.url,
+                "title": clean_text(page.title() or ""),
+            }
+        finally:
+            page.close()
+    finally:
+        browser.close()
+        playwright.stop()
+
+
 def cmd_links(args) -> Dict[str, Any]:
     playwright, browser = connect_browser(args.cdp)
     try:
@@ -3907,6 +4435,44 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Authenticated Chromium browser helper for Codex PowerShell tools.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    extension_install = subparsers.add_parser("extension-install")
+    extension_install.add_argument("--extensions-root", required=True)
+    extension_install.add_argument("--browser", default="edge", choices=["edge", "chrome"])
+    extension_install.add_argument("--name")
+    extension_install.add_argument("--source-url")
+    extension_install.add_argument("--package-path")
+    extension_install.add_argument("--directory-path")
+    extension_install.add_argument("--overwrite", action="store_true")
+
+    extension_runtime_list = subparsers.add_parser("extension-runtime-list")
+    extension_runtime_list.add_argument("--cdp", required=True)
+    extension_runtime_list.add_argument("--browser", default="edge", choices=["edge", "chrome"])
+    extension_runtime_list.add_argument("--user-data-dir")
+    extension_runtime_list.add_argument("--profile-directory", default="Default")
+
+    extension_open = subparsers.add_parser("extension-open")
+    extension_open.add_argument("--cdp", required=True)
+    extension_open.add_argument("--browser", default="edge", choices=["edge", "chrome"])
+    extension_open.add_argument("--name")
+    extension_open.add_argument("--extension-id")
+    extension_open.add_argument("--page-path")
+    extension_open.add_argument("--url")
+    extension_open.add_argument("--user-data-dir")
+    extension_open.add_argument("--profile-directory", default="Default")
+
+    extension_click = subparsers.add_parser("extension-click")
+    extension_click.add_argument("--cdp", required=True)
+    extension_click.add_argument("--browser", default="edge", choices=["edge", "chrome"])
+    extension_click.add_argument("--name")
+    extension_click.add_argument("--extension-id")
+    extension_click.add_argument("--page-path")
+    extension_click.add_argument("--url")
+    extension_click.add_argument("--selector")
+    extension_click.add_argument("--text-contains")
+    extension_click.add_argument("--timeout-ms", type=int, default=5000)
+    extension_click.add_argument("--user-data-dir")
+    extension_click.add_argument("--profile-directory", default="Default")
+
     links = subparsers.add_parser("links")
     links.add_argument("--cdp", required=True)
     links.add_argument("--url")
@@ -4014,7 +4580,15 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        if args.command == "links":
+        if args.command == "extension-install":
+            result = cmd_extension_install(args)
+        elif args.command == "extension-runtime-list":
+            result = cmd_extension_runtime_list(args)
+        elif args.command == "extension-open":
+            result = cmd_extension_open(args)
+        elif args.command == "extension-click":
+            result = cmd_extension_click(args)
+        elif args.command == "links":
             result = cmd_links(args)
         elif args.command == "infer-spec":
             result = cmd_infer_spec(args)
