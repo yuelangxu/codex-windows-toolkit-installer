@@ -378,16 +378,16 @@ def detect_chatgpt_guard_signal(page) -> Optional[Dict[str, str]]:
 
 def chatgpt_iteration_delay_seconds(risk_level: str) -> float:
     if risk_level in {"high", "very_high"}:
-        return random.uniform(10.0, 14.0)
+        return random.uniform(2.5, 3.5)
     if risk_level == "medium":
-        return random.uniform(7.5, 10.5)
-    return random.uniform(5.5, 8.0)
+        return random.uniform(1.9, 2.7)
+    return random.uniform(1.4, 2.0)
 
 
 def get_chatgpt_rate_limit_config() -> Dict[str, float]:
-    browse_delay = max(0.0, env_float("CODEX_CHATGPT_BROWSE_DELAY_SECONDS", 6.5))
-    mutation_delay = max(browse_delay, env_float("CODEX_CHATGPT_MUTATION_DELAY_SECONDS", 18.0))
-    jitter_delay = max(0.0, env_float("CODEX_CHATGPT_DELAY_JITTER_SECONDS", 2.5))
+    browse_delay = max(0.0, env_float("CODEX_CHATGPT_BROWSE_DELAY_SECONDS", 1.625))
+    mutation_delay = max(browse_delay, env_float("CODEX_CHATGPT_MUTATION_DELAY_SECONDS", 4.5))
+    jitter_delay = max(0.0, env_float("CODEX_CHATGPT_DELAY_JITTER_SECONDS", 0.625))
     return {
         "browse_delay": browse_delay,
         "mutation_delay": mutation_delay,
@@ -442,19 +442,19 @@ def throttle_chatgpt_request(category: str, reason: str = "") -> Dict[str, Any]:
 
 
 def get_chatgpt_guard_cooldown_seconds() -> float:
-    return max(1.0, env_float("CODEX_CHATGPT_GOT_IT_COOLDOWN_SECONDS", 18.0))
+    return max(0.5, env_float("CODEX_CHATGPT_GOT_IT_COOLDOWN_SECONDS", 4.5))
 
 
 def get_chatgpt_sidebar_settle_seconds() -> float:
-    return max(1.0, env_float("CODEX_CHATGPT_SIDEBAR_SETTLE_SECONDS", 4.0))
+    return max(0.25, env_float("CODEX_CHATGPT_SIDEBAR_SETTLE_SECONDS", 1.0))
 
 
 def get_chatgpt_post_action_settle_seconds() -> float:
-    return max(0.8, env_float("CODEX_CHATGPT_POST_ACTION_SETTLE_SECONDS", 3.0))
+    return max(0.2, env_float("CODEX_CHATGPT_POST_ACTION_SETTLE_SECONDS", 0.75))
 
 
 def get_chatgpt_poll_interval_seconds() -> float:
-    return max(0.8, env_float("CODEX_CHATGPT_POLL_INTERVAL_SECONDS", 2.0))
+    return max(0.2, env_float("CODEX_CHATGPT_POLL_INTERVAL_SECONDS", 0.5))
 
 
 def wait_chatgpt_sidebar_settle(page, multiplier: float = 1.0) -> None:

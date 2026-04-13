@@ -1048,17 +1048,17 @@ function Initialize-CodexShell {
     if ([string]::IsNullOrWhiteSpace($env:CODEX_DOC_IMAGE_PROFILE)) { $env:CODEX_DOC_IMAGE_PROFILE = 'auto' }
     if ([string]::IsNullOrWhiteSpace($env:CODEX_DOC_PREPROCESS_IMAGES)) { $env:CODEX_DOC_PREPROCESS_IMAGES = '1' }
     if ([string]::IsNullOrWhiteSpace($env:CODEX_DOC_SCAN_SAMPLE_CHARS)) { $env:CODEX_DOC_SCAN_SAMPLE_CHARS = '1400' }
-    if ([string]::IsNullOrWhiteSpace($env:CODEX_AUTH_MIN_REQUEST_INTERVAL_SECONDS)) { $env:CODEX_AUTH_MIN_REQUEST_INTERVAL_SECONDS = '18' }
-    if ([string]::IsNullOrWhiteSpace($env:CODEX_AUTH_REQUEST_INTERVAL_JITTER_SECONDS)) { $env:CODEX_AUTH_REQUEST_INTERVAL_JITTER_SECONDS = '3' }
+    if ([string]::IsNullOrWhiteSpace($env:CODEX_AUTH_MIN_REQUEST_INTERVAL_SECONDS)) { $env:CODEX_AUTH_MIN_REQUEST_INTERVAL_SECONDS = '4.5' }
+    if ([string]::IsNullOrWhiteSpace($env:CODEX_AUTH_REQUEST_INTERVAL_JITTER_SECONDS)) { $env:CODEX_AUTH_REQUEST_INTERVAL_JITTER_SECONDS = '0.75' }
     if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_CDP_PORT)) { $env:CODEX_CHATGPT_CDP_PORT = '9333' }
     if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_BROWSER)) { $env:CODEX_CHATGPT_BROWSER = 'edge' }
-    if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_BROWSE_DELAY_SECONDS)) { $env:CODEX_CHATGPT_BROWSE_DELAY_SECONDS = '6.5' }
-    if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_MUTATION_DELAY_SECONDS)) { $env:CODEX_CHATGPT_MUTATION_DELAY_SECONDS = '18' }
-    if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_DELAY_JITTER_SECONDS)) { $env:CODEX_CHATGPT_DELAY_JITTER_SECONDS = '2.5' }
-    if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_GOT_IT_COOLDOWN_SECONDS)) { $env:CODEX_CHATGPT_GOT_IT_COOLDOWN_SECONDS = '18' }
-    if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_SIDEBAR_SETTLE_SECONDS)) { $env:CODEX_CHATGPT_SIDEBAR_SETTLE_SECONDS = '4' }
-    if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_POST_ACTION_SETTLE_SECONDS)) { $env:CODEX_CHATGPT_POST_ACTION_SETTLE_SECONDS = '3' }
-    if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_POLL_INTERVAL_SECONDS)) { $env:CODEX_CHATGPT_POLL_INTERVAL_SECONDS = '2' }
+    if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_BROWSE_DELAY_SECONDS)) { $env:CODEX_CHATGPT_BROWSE_DELAY_SECONDS = '1.625' }
+    if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_MUTATION_DELAY_SECONDS)) { $env:CODEX_CHATGPT_MUTATION_DELAY_SECONDS = '4.5' }
+    if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_DELAY_JITTER_SECONDS)) { $env:CODEX_CHATGPT_DELAY_JITTER_SECONDS = '0.625' }
+    if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_GOT_IT_COOLDOWN_SECONDS)) { $env:CODEX_CHATGPT_GOT_IT_COOLDOWN_SECONDS = '4.5' }
+    if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_SIDEBAR_SETTLE_SECONDS)) { $env:CODEX_CHATGPT_SIDEBAR_SETTLE_SECONDS = '1' }
+    if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_POST_ACTION_SETTLE_SECONDS)) { $env:CODEX_CHATGPT_POST_ACTION_SETTLE_SECONDS = '0.75' }
+    if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_POLL_INTERVAL_SECONDS)) { $env:CODEX_CHATGPT_POLL_INTERVAL_SECONDS = '0.5' }
     Initialize-CodexReadLine
     Initialize-CodexOptionalModules
     Initialize-CodexToolAliases

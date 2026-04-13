@@ -313,8 +313,8 @@ function Get-CodexAuthThrottleConfig {
     param()
 
     return [pscustomobject]@{
-        MinIntervalSeconds = [Math]::Max(0.0, (Get-CodexAuthDoubleEnvValue -Name 'CODEX_AUTH_MIN_REQUEST_INTERVAL_SECONDS' -Default 18.0))
-        JitterSeconds = [Math]::Max(0.0, (Get-CodexAuthDoubleEnvValue -Name 'CODEX_AUTH_REQUEST_INTERVAL_JITTER_SECONDS' -Default 3.0))
+        MinIntervalSeconds = [Math]::Max(0.0, (Get-CodexAuthDoubleEnvValue -Name 'CODEX_AUTH_MIN_REQUEST_INTERVAL_SECONDS' -Default 4.5))
+        JitterSeconds = [Math]::Max(0.0, (Get-CodexAuthDoubleEnvValue -Name 'CODEX_AUTH_REQUEST_INTERVAL_JITTER_SECONDS' -Default 0.75))
     }
 }
 
