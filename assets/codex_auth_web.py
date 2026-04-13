@@ -378,16 +378,16 @@ def detect_chatgpt_guard_signal(page) -> Optional[Dict[str, str]]:
 
 def chatgpt_iteration_delay_seconds(risk_level: str) -> float:
     if risk_level in {"high", "very_high"}:
-        return random.uniform(2.4, 3.6)
+        return random.uniform(10.0, 14.0)
     if risk_level == "medium":
-        return random.uniform(1.8, 2.8)
-    return random.uniform(1.2, 2.0)
+        return random.uniform(7.5, 10.5)
+    return random.uniform(5.5, 8.0)
 
 
 def get_chatgpt_rate_limit_config() -> Dict[str, float]:
-    browse_delay = max(0.0, env_float("CODEX_CHATGPT_BROWSE_DELAY_SECONDS", 2.5))
-    mutation_delay = max(browse_delay, env_float("CODEX_CHATGPT_MUTATION_DELAY_SECONDS", 8.0))
-    jitter_delay = max(0.0, env_float("CODEX_CHATGPT_DELAY_JITTER_SECONDS", 0.6))
+    browse_delay = max(0.0, env_float("CODEX_CHATGPT_BROWSE_DELAY_SECONDS", 6.5))
+    mutation_delay = max(browse_delay, env_float("CODEX_CHATGPT_MUTATION_DELAY_SECONDS", 18.0))
+    jitter_delay = max(0.0, env_float("CODEX_CHATGPT_DELAY_JITTER_SECONDS", 2.5))
     return {
         "browse_delay": browse_delay,
         "mutation_delay": mutation_delay,
@@ -442,7 +442,47 @@ def throttle_chatgpt_request(category: str, reason: str = "") -> Dict[str, Any]:
 
 
 def get_chatgpt_guard_cooldown_seconds() -> float:
-    return max(1.0, env_float("CODEX_CHATGPT_GOT_IT_COOLDOWN_SECONDS", 10.0))
+    return max(1.0, env_float("CODEX_CHATGPT_GOT_IT_COOLDOWN_SECONDS", 18.0))
+
+
+def get_chatgpt_sidebar_settle_seconds() -> float:
+    return max(1.0, env_float("CODEX_CHATGPT_SIDEBAR_SETTLE_SECONDS", 4.0))
+
+
+def get_chatgpt_post_action_settle_seconds() -> float:
+    return max(0.8, env_float("CODEX_CHATGPT_POST_ACTION_SETTLE_SECONDS", 3.0))
+
+
+def get_chatgpt_poll_interval_seconds() -> float:
+    return max(0.8, env_float("CODEX_CHATGPT_POLL_INTERVAL_SECONDS", 2.0))
+
+
+def wait_chatgpt_sidebar_settle(page, multiplier: float = 1.0) -> None:
+    page.wait_for_timeout(int(get_chatgpt_sidebar_settle_seconds() * 1000 * max(0.1, multiplier)))
+
+
+def wait_chatgpt_post_action_settle(page, multiplier: float = 1.0) -> None:
+    page.wait_for_timeout(int(get_chatgpt_post_action_settle_seconds() * 1000 * max(0.1, multiplier)))
+
+
+def refresh_chatgpt_page(page, reason: str = "", target_url: Optional[str] = None) -> Dict[str, Any]:
+    refresh_url = clean_text(target_url or page.url or "https://chatgpt.com/")
+    if get_url_host(refresh_url) not in CHATGPT_HOSTS:
+        refresh_url = "https://chatgpt.com/"
+
+    throttle_chatgpt_request("browse", f"refresh:{clean_text(reason) or refresh_url}")
+    try:
+        current_url = clean_text(page.url or "")
+        if current_url and current_url == refresh_url:
+            page.reload(wait_until="domcontentloaded", timeout=120000)
+        else:
+            page.goto(refresh_url, wait_until="domcontentloaded", timeout=120000)
+    except Exception:
+        page.goto(refresh_url, wait_until="domcontentloaded", timeout=120000)
+
+    wait_chatgpt_post_action_settle(page, multiplier=1.4)
+    prepare_chatgpt_page(page)
+    return {"url": page.url, "reason": clean_text(reason)}
 
 
 def conversation_id_from_url(url: str) -> str:
@@ -460,6 +500,7 @@ def ensure_chatgpt_sidebar_visible(page) -> None:
         return
 
     prepare_chatgpt_page(page)
+    wait_chatgpt_sidebar_settle(page, multiplier=0.6)
 
     if page.locator('a[href*="/c/"]').count() > 0:
         return
@@ -475,7 +516,7 @@ def ensure_chatgpt_sidebar_visible(page) -> None:
         try:
             if locator.count() > 0:
                 safe_click(locator, timeout=1200, reason=f"sidebar:{selector}")
-                page.wait_for_timeout(800)
+                wait_chatgpt_sidebar_settle(page)
                 if page.locator('a[href*="/c/"]').count() > 0:
                     return
         except Exception:
@@ -486,6 +527,7 @@ def load_all_chatgpt_sidebar_items(page, max_rounds: int = 45) -> None:
     ensure_chatgpt_sidebar_visible(page)
     stable_rounds = 0
     previous_count = 0
+    wait_chatgpt_sidebar_settle(page)
 
     for _ in range(max_rounds):
         current_count = page.locator('a[href*="/c/"]').count()
@@ -516,7 +558,7 @@ def load_all_chatgpt_sidebar_items(page, max_rounds: int = 45) -> None:
                 window.scrollTo(0, document.body.scrollHeight);
             }"""
         )
-        page.wait_for_timeout(650)
+        wait_chatgpt_sidebar_settle(page, multiplier=0.6)
 
 
 def extract_chatgpt_sidebar_entries(page) -> List[Dict[str, str]]:
@@ -553,6 +595,27 @@ def extract_chatgpt_sidebar_entries(page) -> List[Dict[str, str]]:
                 "conversation_id": conversation_id,
             }
         )
+    return entries
+
+
+def load_chatgpt_sidebar_entries(page, target_url: Optional[str] = None, max_refresh_attempts: int = 2) -> List[Dict[str, str]]:
+    entries: List[Dict[str, str]] = []
+    for attempt in range(max_refresh_attempts + 1):
+        ensure_chatgpt_sidebar_visible(page)
+        load_all_chatgpt_sidebar_items(page)
+        entries = extract_chatgpt_sidebar_entries(page)
+        if entries:
+            return entries
+
+        if attempt >= max_refresh_attempts:
+            break
+
+        refresh_chatgpt_page(
+            page,
+            reason=f"sidebar_restore_attempt_{attempt + 1}",
+            target_url=target_url or page.url or "https://chatgpt.com/",
+        )
+
     return entries
 
 
@@ -667,10 +730,12 @@ def recover_chatgpt_retryable_guard(page, guard_signal: Dict[str, str]) -> Dict[
     cooldown_seconds = get_chatgpt_guard_cooldown_seconds()
     time.sleep(cooldown_seconds)
     dismiss_chatgpt_obstructive_dialogs(page, max_rounds=1)
+    refreshed = refresh_chatgpt_page(page, reason="retryable_guard_refresh", target_url=page.url or "https://chatgpt.com/")
     return {
         "signal": clean_text(guard_signal.get("signal") or ""),
         "dismissed": dismissed,
         "cooldown_seconds": cooldown_seconds,
+        "refreshed": refreshed,
     }
 
 
@@ -824,7 +889,7 @@ def click_chatgpt_new_chat(page) -> None:
     if get_url_host(current_url) not in CHATGPT_HOSTS:
         throttle_chatgpt_request("browse", "goto_chatgpt_home_for_new_chat")
         page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=120000)
-        page.wait_for_timeout(1200)
+        wait_chatgpt_post_action_settle(page)
         prepare_chatgpt_page(page)
 
     selectors = [
@@ -840,7 +905,7 @@ def click_chatgpt_new_chat(page) -> None:
         try:
             throttle_chatgpt_request("browse", f"new_chat_click:{selector}")
             safe_click(locator.first, timeout=3000, reason=f"new_chat:{selector}")
-            page.wait_for_timeout(1200)
+            wait_chatgpt_post_action_settle(page)
             current_chatgpt_input_locator(page)
             return
         except Exception:
@@ -848,7 +913,7 @@ def click_chatgpt_new_chat(page) -> None:
 
     throttle_chatgpt_request("browse", "goto_chatgpt_home_fallback")
     page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=120000)
-    page.wait_for_timeout(1500)
+    wait_chatgpt_post_action_settle(page, multiplier=1.2)
     prepare_chatgpt_page(page)
     current_chatgpt_input_locator(page)
 
@@ -866,7 +931,7 @@ def open_chatgpt_target(
 
     throttle_chatgpt_request("browse", f"open_target:{target_url}")
     page.goto(target_url, wait_until="domcontentloaded", timeout=120000)
-    page.wait_for_timeout(1200)
+    wait_chatgpt_post_action_settle(page)
 
     host = get_url_host(page.url)
     if host not in CHATGPT_HOSTS:
@@ -880,13 +945,12 @@ def open_chatgpt_target(
         return {"mode": "new_chat", "url": page.url, "conversation_id": conversation_id_from_url(page.url)}
 
     if conversation_id or title_contains:
-        ensure_chatgpt_sidebar_visible(page)
-        load_all_chatgpt_sidebar_items(page)
-        entries = extract_chatgpt_sidebar_entries(page)
+        entries = load_chatgpt_sidebar_entries(page, target_url=target_url)
         chosen = find_chatgpt_sidebar_entry(entries, conversation_id=conversation_id, title_contains=title_contains)
         throttle_chatgpt_request("browse", f"open_existing_chat:{chosen.get('conversation_id') or chosen.get('title') or 'chat'}")
         page.goto(chosen["href"], wait_until="domcontentloaded", timeout=120000)
         wait_for_chatgpt_conversation(page)
+        wait_chatgpt_post_action_settle(page)
         return {
             "mode": "existing_chat",
             "url": page.url,
@@ -1271,7 +1335,7 @@ def wait_for_chatgpt_answer(page, before_conversation: Dict[str, Any], timeout_s
                 return conversation, last_assistant
 
         previous_text = current_text
-        time.sleep(1.2)
+        time.sleep(get_chatgpt_poll_interval_seconds())
 
     raise RuntimeError("Timed out while waiting for ChatGPT to finish responding.")
 
@@ -1776,9 +1840,7 @@ def cmd_chatgpt_list(args) -> Dict[str, Any]:
         page, created = choose_page(context, page_url_contains=args.page_url_contains)
         try:
             open_chatgpt_target(page, url=args.url)
-            ensure_chatgpt_sidebar_visible(page)
-            load_all_chatgpt_sidebar_items(page)
-            entries = extract_chatgpt_sidebar_entries(page)
+            entries = load_chatgpt_sidebar_entries(page, target_url=args.url or page.url or "https://chatgpt.com/")
             if args.title_contains:
                 needle = clean_text(args.title_contains).lower()
                 entries = [entry for entry in entries if needle in clean_text(entry.get("title") or "").lower()]
@@ -2016,9 +2078,7 @@ def cmd_chatgpt_export(args) -> Dict[str, Any]:
             if initial_guard:
                 raise RuntimeError(f"ChatGPT appears to be temporarily guarded or rate-limited: {initial_guard['signal']}")
 
-            ensure_chatgpt_sidebar_visible(page)
-            load_all_chatgpt_sidebar_items(page)
-            entries = extract_chatgpt_sidebar_entries(page)
+            entries = load_chatgpt_sidebar_entries(page, target_url=url)
             if not entries:
                 raise RuntimeError("No ChatGPT conversations were found in the sidebar. Make sure history is enabled and the session is logged in.")
 

@@ -136,6 +136,167 @@ function Wait-CodexCdpEndpoint {
     return $false
 }
 
+function Get-CodexAuthStateRoot {
+    [CmdletBinding()]
+    param()
+
+    if (-not [string]::IsNullOrWhiteSpace($env:CODEX_HOME)) {
+        return (Join-Path ([Environment]::ExpandEnvironmentVariables($env:CODEX_HOME)) 'web-auth-state')
+    }
+
+    return (Join-Path $HOME '.codex\web-auth-state')
+}
+
+function Get-CodexAuthThrottleStatePath {
+    [CmdletBinding()]
+    param()
+
+    return (Join-Path (Get-CodexAuthStateRoot) 'powershell-chatgpt-throttle.json')
+}
+
+function Get-CodexAuthDoubleEnvValue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [double]$Default
+    )
+
+    $raw = [Environment]::GetEnvironmentVariable($Name)
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return $Default
+    }
+
+    $parsed = 0.0
+    if ([double]::TryParse($raw, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$parsed)) {
+        return $parsed
+    }
+
+    return $Default
+}
+
+function Get-CodexAuthThrottleConfig {
+    [CmdletBinding()]
+    param()
+
+    return [pscustomobject]@{
+        MinIntervalSeconds = [Math]::Max(0.0, (Get-CodexAuthDoubleEnvValue -Name 'CODEX_AUTH_MIN_REQUEST_INTERVAL_SECONDS' -Default 18.0))
+        JitterSeconds = [Math]::Max(0.0, (Get-CodexAuthDoubleEnvValue -Name 'CODEX_AUTH_REQUEST_INTERVAL_JITTER_SECONDS' -Default 3.0))
+    }
+}
+
+function Read-CodexAuthThrottleState {
+    [CmdletBinding()]
+    param()
+
+    $path = Get-CodexAuthThrottleStatePath
+    if (-not (Test-Path -LiteralPath $path)) {
+        return @{}
+    }
+
+    try {
+        $parsed = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        $state = @{}
+        if ($null -ne $parsed) {
+            foreach ($property in $parsed.PSObject.Properties) {
+                $state[$property.Name] = $property.Value
+            }
+        }
+        return $state
+    } catch {
+        return @{}
+    }
+}
+
+function Write-CodexAuthThrottleState {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$State
+    )
+
+    $path = Get-CodexAuthThrottleStatePath
+    $root = Split-Path -Parent $path
+    if (-not [string]::IsNullOrWhiteSpace($root)) {
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+    }
+
+    ($State | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $path -Encoding UTF8
+}
+
+function Test-CodexChatGptHelperCommand {
+    [CmdletBinding()]
+    param(
+        [string]$CommandName
+    )
+
+    return (-not [string]::IsNullOrWhiteSpace($CommandName) -and $CommandName.StartsWith('chatgpt-', [System.StringComparison]::OrdinalIgnoreCase))
+}
+
+function Wait-CodexChatGptRequestInterval {
+    [CmdletBinding()]
+    param(
+        [string]$CommandName
+    )
+
+    if (-not (Test-CodexChatGptHelperCommand -CommandName $CommandName)) {
+        return
+    }
+
+    $config = Get-CodexAuthThrottleConfig
+    if ($config.MinIntervalSeconds -le 0) {
+        return
+    }
+
+    $state = Read-CodexAuthThrottleState
+    $lastCompletedUtc = $null
+    if ($state.ContainsKey('LastCompletedUtc') -and -not [string]::IsNullOrWhiteSpace([string]$state.LastCompletedUtc)) {
+        try {
+            $lastCompletedUtc = [DateTime]::Parse([string]$state.LastCompletedUtc, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind)
+        } catch {
+            $lastCompletedUtc = $null
+        }
+    }
+
+    if ($null -eq $lastCompletedUtc) {
+        return
+    }
+
+    $elapsedSeconds = [Math]::Max(0.0, ([DateTime]::UtcNow - $lastCompletedUtc).TotalSeconds)
+    $remainingSeconds = [Math]::Max(0.0, $config.MinIntervalSeconds - $elapsedSeconds)
+    if ($remainingSeconds -le 0) {
+        return
+    }
+
+    $jitterSeconds = 0.0
+    if ($config.JitterSeconds -gt 0) {
+        $random = [System.Random]::new()
+        $jitterSeconds = $random.NextDouble() * $config.JitterSeconds
+    }
+
+    $waitSeconds = $remainingSeconds + $jitterSeconds
+    Write-Host ("[auth-throttle] waiting {0:N1}s before {1}" -f $waitSeconds, $CommandName) -ForegroundColor DarkGray
+    Start-Sleep -Milliseconds ([int][Math]::Ceiling($waitSeconds * 1000.0))
+}
+
+function Update-CodexChatGptRequestInterval {
+    [CmdletBinding()]
+    param(
+        [string]$CommandName
+    )
+
+    if (-not (Test-CodexChatGptHelperCommand -CommandName $CommandName)) {
+        return
+    }
+
+    Write-CodexAuthThrottleState -State @{
+        LastCompletedUtc = [DateTime]::UtcNow.ToString('o')
+        LastCommand = $CommandName
+    }
+}
+
 function Invoke-CodexAuthHelper {
     [CmdletBinding()]
     param(
@@ -145,6 +306,9 @@ function Invoke-CodexAuthHelper {
 
     Ensure-CodexAuthDependencies
 
+    $commandName = if ($Arguments.Count -gt 0) { [string]$Arguments[0] } else { '' }
+    Wait-CodexChatGptRequestInterval -CommandName $commandName
+
     $python = Get-CodexPythonPath
     $scriptPath = Get-CodexAuthHelperScriptPath
     if (-not (Test-Path -LiteralPath $scriptPath)) {
@@ -152,6 +316,7 @@ function Invoke-CodexAuthHelper {
     }
 
     $output = & $python $scriptPath @Arguments
+    Update-CodexChatGptRequestInterval -CommandName $commandName
     if ($LASTEXITCODE -ne 0) {
         $text = [string]::Join([Environment]::NewLine, @($output))
         throw "codex_auth_web.py failed.`n$text"
