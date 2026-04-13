@@ -103,6 +103,137 @@ function Get-CodexChromiumUserDataDir {
     }
 }
 
+function Get-CodexAuthProfileRoot {
+    [CmdletBinding()]
+    param()
+
+    $profileRootCommand = Get-Command 'Get-CodexPowerShellProfileRoot' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -ne $profileRootCommand) {
+        return (Get-CodexPowerShellProfileRoot)
+    }
+
+    $myDocuments = [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments)
+    return (Join-Path $myDocuments 'PowerShell')
+}
+
+function Get-CodexAuthToolkitRoot {
+    [CmdletBinding()]
+    param()
+
+    if (-not [string]::IsNullOrWhiteSpace($env:CODEX_POWERSHELL_ROOT)) {
+        return $env:CODEX_POWERSHELL_ROOT
+    }
+
+    $toolkitRootCommand = Get-Command 'Get-CodexPowerShellRoot' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -ne $toolkitRootCommand) {
+        return (Get-CodexPowerShellRoot)
+    }
+
+    return (Join-Path (Get-CodexAuthProfileRoot) 'Toolkit')
+}
+
+function Get-CodexChatGptBrowserStateRoot {
+    [CmdletBinding()]
+    param()
+
+    return (Join-Path (Get-CodexAuthToolkitRoot) 'state\chatgpt-browser')
+}
+
+function Get-CodexChatGptManagedUserDataDir {
+    [CmdletBinding()]
+    param(
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser = 'edge'
+    )
+
+    return (Join-Path (Get-CodexChatGptBrowserStateRoot) ("{0}-user-data" -f $Browser))
+}
+
+function Get-CodexAuthIntEnvValue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [int]$Default
+    )
+
+    $raw = [Environment]::GetEnvironmentVariable($Name)
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return $Default
+    }
+
+    $parsed = 0
+    if ([int]::TryParse($raw, [ref]$parsed)) {
+        return $parsed
+    }
+
+    return $Default
+}
+
+function Resolve-CodexChatGptPort {
+    [CmdletBinding()]
+    param(
+        [int]$Port = 0
+    )
+
+    if ($Port -gt 0) {
+        return $Port
+    }
+
+    $resolvedPort = Get-CodexAuthIntEnvValue -Name 'CODEX_CHATGPT_CDP_PORT' -Default 9333
+    if ($resolvedPort -le 0) {
+        return 9333
+    }
+
+    return $resolvedPort
+}
+
+function Resolve-CodexChatGptBrowser {
+    [CmdletBinding()]
+    param(
+        [string]$Browser
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($Browser)) {
+        return $Browser.ToLowerInvariant()
+    }
+
+    $raw = [Environment]::GetEnvironmentVariable('CODEX_CHATGPT_BROWSER')
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return 'edge'
+    }
+
+    return $raw.ToLowerInvariant()
+}
+
+function Get-CodexChatGptBrowserLaunchPlan {
+    [CmdletBinding()]
+    param(
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser = 'edge',
+
+        [switch]$ForceRestartBrowser
+    )
+
+    $processName = if ($Browser -eq 'edge') { 'msedge' } else { 'chrome' }
+    $running = @(Get-Process -Name $processName -ErrorAction SilentlyContinue)
+    $useManagedUserData = (-not $ForceRestartBrowser)
+    $userDataDir = if ($useManagedUserData) {
+        Get-CodexChatGptManagedUserDataDir -Browser $Browser
+    } else {
+        Get-CodexChromiumUserDataDir -Browser $Browser
+    }
+
+    return [pscustomobject]@{
+        Browser = $Browser
+        RunningBrowserCount = $running.Count
+        UseManagedUserData = $useManagedUserData
+        UserDataDir = $userDataDir
+    }
+}
+
 function Test-CodexCdpEndpoint {
     [CmdletBinding()]
     param(
@@ -316,11 +447,12 @@ function Invoke-CodexAuthHelper {
     }
 
     $output = & $python $scriptPath @Arguments
-    Update-CodexChatGptRequestInterval -CommandName $commandName
     if ($LASTEXITCODE -ne 0) {
         $text = [string]::Join([Environment]::NewLine, @($output))
         throw "codex_auth_web.py failed.`n$text"
     }
+
+    Update-CodexChatGptRequestInterval -CommandName $commandName
 
     $raw = [string]::Join([Environment]::NewLine, @($output)).Trim()
     if ([string]::IsNullOrWhiteSpace($raw)) {
@@ -367,7 +499,11 @@ function Start-CodexAuthBrowser {
 
         [string]$Url = 'about:blank',
 
+        [string]$UserDataDir,
+
         [switch]$ForceRestart,
+
+        [switch]$AllowConcurrentInstance,
 
         [switch]$PassThru
     )
@@ -390,15 +526,20 @@ function Start-CodexAuthBrowser {
     }
 
     $exePath = Get-CodexChromiumExecutable -Browser $Browser
-    $userDataDir = Get-CodexChromiumUserDataDir -Browser $Browser
+    if ([string]::IsNullOrWhiteSpace($UserDataDir)) {
+        $userDataDir = Get-CodexChromiumUserDataDir -Browser $Browser
+    } else {
+        $userDataDir = $UserDataDir
+    }
+    New-Item -ItemType Directory -Path $userDataDir -Force | Out-Null
     $processName = if ($Browser -eq 'edge') { 'msedge' } else { 'chrome' }
     $running = @(Get-Process -Name $processName -ErrorAction SilentlyContinue)
 
-    if ($running.Count -gt 0 -and -not $ForceRestart) {
+    if ($running.Count -gt 0 -and -not $ForceRestart -and -not $AllowConcurrentInstance) {
         throw "Existing $Browser windows are running. Close them first or rerun with -ForceRestart."
     }
 
-    if ($running.Count -gt 0 -and $ForceRestart) {
+    if ($running.Count -gt 0 -and $ForceRestart -and -not $AllowConcurrentInstance) {
         $running | Stop-Process -Force
         Start-Sleep -Seconds 2
     }
@@ -407,6 +548,9 @@ function Start-CodexAuthBrowser {
         "--remote-debugging-port=$Port",
         "--user-data-dir=""$userDataDir""",
         "--profile-directory=$ProfileDirectory",
+        '--new-window',
+        '--no-first-run',
+        '--no-default-browser-check',
         $Url
     )
 
@@ -429,6 +573,112 @@ function Start-CodexAuthBrowser {
     }
 
     $result
+}
+
+function Ensure-CodexChatGptBrowserSession {
+    [CmdletBinding()]
+    param(
+        [string]$Browser,
+
+        [int]$Port = 0,
+
+        [string]$Url = 'https://chatgpt.com/',
+
+        [switch]$ForceRestartBrowser,
+
+        [switch]$PassThru
+    )
+
+    $resolvedBrowser = Resolve-CodexChatGptBrowser -Browser $Browser
+    $resolvedPort = Resolve-CodexChatGptPort -Port $Port
+
+    if (Test-CodexCdpEndpoint -Port $resolvedPort) {
+        $result = [pscustomobject]@{
+            Browser = $resolvedBrowser
+            Port = $resolvedPort
+            Url = $Url
+            Status = 'AlreadyListening'
+            Endpoint = "http://127.0.0.1:$resolvedPort"
+            UserDataDir = ''
+            UsesManagedProfile = $false
+        }
+
+        if ($PassThru) {
+            return $result
+        }
+
+        $result
+        return
+    }
+
+    $launchPlan = Get-CodexChatGptBrowserLaunchPlan -Browser $resolvedBrowser -ForceRestartBrowser:$ForceRestartBrowser
+    if ($launchPlan.UseManagedUserData) {
+        Write-Host ("[chatgpt-browser] using dedicated automation profile under {0}" -f $launchPlan.UserDataDir) -ForegroundColor DarkGray
+    }
+
+    $started = Start-CodexAuthBrowser `
+        -Browser $resolvedBrowser `
+        -Port $resolvedPort `
+        -Url $Url `
+        -UserDataDir $launchPlan.UserDataDir `
+        -AllowConcurrentInstance:$launchPlan.UseManagedUserData `
+        -ForceRestart:$ForceRestartBrowser `
+        -PassThru
+
+    $result = [pscustomobject]@{
+        Browser = $resolvedBrowser
+        Port = $resolvedPort
+        Url = $Url
+        Status = $started.Status
+        Endpoint = $started.Endpoint
+        UserDataDir = $launchPlan.UserDataDir
+        UsesManagedProfile = $launchPlan.UseManagedUserData
+    }
+
+    if ($PassThru) {
+        return $result
+    }
+
+    $result
+}
+
+function Start-CodexChatGptBrowserSession {
+    [CmdletBinding()]
+    param(
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser,
+
+        [int]$Port = 0,
+
+        [string]$Url = 'https://chatgpt.com/',
+
+        [switch]$ForceRestartBrowser
+    )
+
+    Ensure-CodexChatGptBrowserSession -Browser $Browser -Port $Port -Url $Url -ForceRestartBrowser:$ForceRestartBrowser
+}
+
+function Initialize-CodexChatGptCommandContext {
+    [CmdletBinding()]
+    param(
+        [string]$Browser,
+
+        [int]$Port = 0,
+
+        [string]$Url = 'https://chatgpt.com/',
+
+        [switch]$ForceRestartBrowser
+    )
+
+    $resolvedBrowser = Resolve-CodexChatGptBrowser -Browser $Browser
+    $resolvedPort = Resolve-CodexChatGptPort -Port $Port
+    $null = Ensure-CodexChatGptBrowserSession -Browser $resolvedBrowser -Port $resolvedPort -Url $Url -ForceRestartBrowser:$ForceRestartBrowser
+
+    return [pscustomobject]@{
+        Browser = $resolvedBrowser
+        Port = $resolvedPort
+        Url = $Url
+    }
 }
 
 function Export-CodexAuthLinks {
@@ -649,7 +899,12 @@ function Export-CodexChatGptDump {
 
         [string]$TopicLabel,
 
-        [int]$Port = 9222,
+        [int]$Port = 0,
+
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser,
+
+        [switch]$ForceRestartBrowser,
 
         [int]$Limit,
 
@@ -663,6 +918,8 @@ function Export-CodexChatGptDump {
     }
 
     $resolvedDestinationDir = Resolve-CodexExistingDirectory -Path $DestinationDir -Label 'ChatGPT destination directory'
+    $chatgptContext = Initialize-CodexChatGptCommandContext -Browser $Browser -Port $Port -Url $Url -ForceRestartBrowser:$ForceRestartBrowser
+    $Port = $chatgptContext.Port
 
     $advisories = New-Object System.Collections.Generic.List[string]
     $normalizedKeywords = New-Object System.Collections.Generic.List[string]
@@ -767,14 +1024,19 @@ function Export-CodexChatGptLearningDump {
 
         [string]$RootName,
 
-        [int]$Port = 9222,
+        [int]$Port = 0,
+
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser,
+
+        [switch]$ForceRestartBrowser,
 
         [int]$Limit,
 
         [switch]$SaveAll
     )
 
-    Export-CodexChatGptDump -Url $Url -PageUrlContains $PageUrlContains -DestinationDir $DestinationDir -RootName $RootName -Port $Port -Limit $Limit -SaveAll:$SaveAll -UseStudyKeywords -TopicLabel 'learning'
+    Export-CodexChatGptDump -Url $Url -PageUrlContains $PageUrlContains -DestinationDir $DestinationDir -RootName $RootName -Port $Port -Browser $Browser -ForceRestartBrowser:$ForceRestartBrowser -Limit $Limit -SaveAll:$SaveAll -UseStudyKeywords -TopicLabel 'learning'
 }
 
 function Get-CodexChatGptConversationList {
@@ -783,10 +1045,15 @@ function Get-CodexChatGptConversationList {
         [string]$Url = 'https://chatgpt.com/',
         [string]$PageUrlContains = 'chatgpt.com',
         [string]$TitleContains,
-        [int]$Port = 9222,
+        [int]$Port = 0,
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser,
+        [switch]$ForceRestartBrowser,
         [int]$Limit
     )
 
+    $chatgptContext = Initialize-CodexChatGptCommandContext -Browser $Browser -Port $Port -Url $Url -ForceRestartBrowser:$ForceRestartBrowser
+    $Port = $chatgptContext.Port
     $arguments = @('chatgpt-list', '--cdp', "http://127.0.0.1:$Port", '--url', $Url)
     if (-not [string]::IsNullOrWhiteSpace($PageUrlContains)) {
         $arguments += @('--page-url-contains', $PageUrlContains)
@@ -810,9 +1077,14 @@ function Open-CodexChatGptConversation {
         [string]$TitleContains,
         [switch]$NewChat,
         [string]$ExportDir,
-        [int]$Port = 9222
+        [int]$Port = 0,
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser,
+        [switch]$ForceRestartBrowser
     )
 
+    $chatgptContext = Initialize-CodexChatGptCommandContext -Browser $Browser -Port $Port -Url $Url -ForceRestartBrowser:$ForceRestartBrowser
+    $Port = $chatgptContext.Port
     $arguments = @('chatgpt-open', '--cdp', "http://127.0.0.1:$Port", '--url', $Url)
     if (-not [string]::IsNullOrWhiteSpace($PageUrlContains)) {
         $arguments += @('--page-url-contains', $PageUrlContains)
@@ -844,10 +1116,15 @@ function Save-CodexChatGptConversation {
         [string]$ConversationId,
         [string]$TitleContains,
         [switch]$NewChat,
-        [int]$Port = 9222
+        [int]$Port = 0,
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser,
+        [switch]$ForceRestartBrowser
     )
 
     $resolvedDestinationDir = Resolve-CodexExistingDirectory -Path $DestinationDir -Label 'ChatGPT destination directory'
+    $chatgptContext = Initialize-CodexChatGptCommandContext -Browser $Browser -Port $Port -Url $Url -ForceRestartBrowser:$ForceRestartBrowser
+    $Port = $chatgptContext.Port
     $arguments = @('chatgpt-save', '--cdp', "http://127.0.0.1:$Port", '--url', $Url, '--destination-dir', $resolvedDestinationDir)
     if (-not [string]::IsNullOrWhiteSpace($PageUrlContains)) {
         $arguments += @('--page-url-contains', $PageUrlContains)
@@ -883,10 +1160,15 @@ function Invoke-CodexChatGptPrompt {
         [switch]$ExportHistoryBefore,
         [string]$ResultName,
         [int]$TimeoutSeconds = 300,
-        [int]$Port = 9222
+        [int]$Port = 0,
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser,
+        [switch]$ForceRestartBrowser
     )
 
     $resolvedDestinationDir = Resolve-CodexExistingDirectory -Path $DestinationDir -Label 'ChatGPT destination directory'
+    $chatgptContext = Initialize-CodexChatGptCommandContext -Browser $Browser -Port $Port -Url $Url -ForceRestartBrowser:$ForceRestartBrowser
+    $Port = $chatgptContext.Port
     $arguments = @('chatgpt-ask', '--cdp', "http://127.0.0.1:$Port", '--url', $Url, '--prompt', $Prompt, '--destination-dir', $resolvedDestinationDir, '--timeout', $TimeoutSeconds.ToString())
     if (-not [string]::IsNullOrWhiteSpace($PageUrlContains)) {
         $arguments += @('--page-url-contains', $PageUrlContains)
@@ -929,7 +1211,10 @@ function Remove-CodexChatGptConversation {
         [switch]$CurrentChat,
         [string]$ExportDir,
         [switch]$Force,
-        [int]$Port = 9222
+        [int]$Port = 0,
+        [ValidateSet('edge', 'chrome')]
+        [string]$Browser,
+        [switch]$ForceRestartBrowser
     )
 
     if (-not $Force) {
@@ -940,6 +1225,8 @@ function Remove-CodexChatGptConversation {
         throw 'Provide -ConversationId, -TitleContains, or -CurrentChat.'
     }
 
+    $chatgptContext = Initialize-CodexChatGptCommandContext -Browser $Browser -Port $Port -Url $Url -ForceRestartBrowser:$ForceRestartBrowser
+    $Port = $chatgptContext.Port
     $arguments = @('chatgpt-delete', '--cdp', "http://127.0.0.1:$Port", '--confirm-delete')
     if (-not $CurrentChat -and -not [string]::IsNullOrWhiteSpace($Url)) {
         $arguments += @('--url', $Url)
@@ -1058,6 +1345,12 @@ function Show-CodexAuthHelp {
     @'
 Codex web-auth helpers
 
+0. Prepare the dedicated ChatGPT automation browser:
+   auth-chatgpt-browser
+   The first time you use the dedicated automation profile, sign in to ChatGPT once in that browser window.
+   The dedicated browser state lives under the PowerShell toolkit root instead of the Desktop.
+   If you explicitly want to reuse your normal Edge profile for one command, use -ForceRestartBrowser.
+
 1. Start a logged-in browser with CDP enabled:
    auth-browser -Browser edge -ForceRestart -Url https://example.com
 
@@ -1094,6 +1387,7 @@ Codex web-auth helpers
    auth-chatgpt-dump -DestinationDir C:\Exports -Keyword 'UCL','physics' -TopicLabel learning -Limit 12
 
 10. ChatGPT control helpers:
+   auth-chatgpt-browser
    auth-chatgpt-list -Limit 20
    auth-chatgpt-open -NewChat
    auth-chatgpt-open -TitleContains 'Atomic Physics'
@@ -1107,9 +1401,11 @@ Codex web-auth helpers
 9. ChatGPT safety note:
    Broad keywords and -SaveAll can touch too many conversations too quickly.
    That may trigger temporary ChatGPT protections or temporary closures.
+   ChatGPT commands now auto-prepare their own browser session instead of requiring a separate auth-browser step first.
    If you omit -Limit on a broad ChatGPT export, the tool now auto-caps to a smaller sample and warns first.
    ChatGPT export/ask commands now expect an existing destination directory. If the directory does not exist, they fail fast.
    ChatGPT browser actions are now rate-limited by default across commands, so repeated list/open/ask/delete runs are spaced out automatically.
+   Prompt filling and the actual send click are intentionally separate: the request spacing happens before a command starts, but once the prompt is in the box the send action should happen immediately.
    If ChatGPT shows a Too many requests dialog, the tool now tries to click Got it and waits about 10 seconds before retrying.
    ChatGPT deletion now prefers an authenticated API path first and only falls back to UI actions when needed.
    The page helper now injects reduced-motion styles and hides common floating overlays that intercept clicks.
@@ -1138,6 +1434,7 @@ Set-Alias -Name auth-panopto-spec -Value New-CodexPanoptoSpec -Scope Global -Opt
 Set-Alias -Name auth-moodle-dump -Value Invoke-CodexMoodleDump -Scope Global -Option AllScope -Force
 Set-Alias -Name auth-sharepoint-dump -Value Invoke-CodexSharePointDump -Scope Global -Option AllScope -Force
 Set-Alias -Name auth-panopto-dump -Value Invoke-CodexPanoptoDump -Scope Global -Option AllScope -Force
+Set-Alias -Name auth-chatgpt-browser -Value Start-CodexChatGptBrowserSession -Scope Global -Option AllScope -Force
 Set-Alias -Name auth-chatgpt-dump -Value Export-CodexChatGptDump -Scope Global -Option AllScope -Force
 Set-Alias -Name auth-chatgpt-export -Value Export-CodexChatGptDump -Scope Global -Option AllScope -Force
 Set-Alias -Name auth-chatgpt-study-dump -Value Export-CodexChatGptLearningDump -Scope Global -Option AllScope -Force

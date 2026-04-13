@@ -85,6 +85,7 @@ This installer packages those rough edges into a source-visible, repairable Powe
 - `auth-chatgpt-delete`
 
 These commands extend the `authweb` family with authenticated ChatGPT browser automation, export, save, prompt, and delete workflows.
+They now auto-bootstrap a ChatGPT-ready browser session in one command, and their managed browser state lives under the PowerShell toolkit root instead of the Desktop.
 
 ## Why this improves Codex productivity
 

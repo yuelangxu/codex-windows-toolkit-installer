@@ -465,6 +465,43 @@ def wait_chatgpt_post_action_settle(page, multiplier: float = 1.0) -> None:
     page.wait_for_timeout(int(get_chatgpt_post_action_settle_seconds() * 1000 * max(0.1, multiplier)))
 
 
+def is_retryable_chatgpt_navigation_error(exc: Exception) -> bool:
+    message = clean_text(str(exc)).lower()
+    return "net::err_aborted" in message or "err_aborted" in message
+
+
+def navigate_chatgpt(page, url: str, wait_until: str = "domcontentloaded", timeout: int = 120000, attempts: int = 3) -> None:
+    last_exc: Optional[Exception] = None
+    for attempt in range(max(1, attempts)):
+        try:
+            page.goto(url, wait_until=wait_until, timeout=timeout)
+            return
+        except Exception as exc:
+            last_exc = exc
+            if not is_retryable_chatgpt_navigation_error(exc) or attempt >= attempts - 1:
+                raise
+            page.wait_for_timeout(900 + attempt * 700)
+
+    if last_exc is not None:
+        raise last_exc
+
+
+def reload_chatgpt(page, wait_until: str = "domcontentloaded", timeout: int = 120000, attempts: int = 3) -> None:
+    last_exc: Optional[Exception] = None
+    for attempt in range(max(1, attempts)):
+        try:
+            page.reload(wait_until=wait_until, timeout=timeout)
+            return
+        except Exception as exc:
+            last_exc = exc
+            if not is_retryable_chatgpt_navigation_error(exc) or attempt >= attempts - 1:
+                raise
+            page.wait_for_timeout(900 + attempt * 700)
+
+    if last_exc is not None:
+        raise last_exc
+
+
 def refresh_chatgpt_page(page, reason: str = "", target_url: Optional[str] = None) -> Dict[str, Any]:
     refresh_url = clean_text(target_url or page.url or "https://chatgpt.com/")
     if get_url_host(refresh_url) not in CHATGPT_HOSTS:
@@ -474,11 +511,11 @@ def refresh_chatgpt_page(page, reason: str = "", target_url: Optional[str] = Non
     try:
         current_url = clean_text(page.url or "")
         if current_url and current_url == refresh_url:
-            page.reload(wait_until="domcontentloaded", timeout=120000)
+            reload_chatgpt(page, wait_until="domcontentloaded", timeout=120000)
         else:
-            page.goto(refresh_url, wait_until="domcontentloaded", timeout=120000)
+            navigate_chatgpt(page, refresh_url, wait_until="domcontentloaded", timeout=120000)
     except Exception:
-        page.goto(refresh_url, wait_until="domcontentloaded", timeout=120000)
+        navigate_chatgpt(page, refresh_url, wait_until="domcontentloaded", timeout=120000)
 
     wait_chatgpt_post_action_settle(page, multiplier=1.4)
     prepare_chatgpt_page(page)
@@ -888,7 +925,7 @@ def click_chatgpt_new_chat(page) -> None:
     current_url = page.url or ""
     if get_url_host(current_url) not in CHATGPT_HOSTS:
         throttle_chatgpt_request("browse", "goto_chatgpt_home_for_new_chat")
-        page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=120000)
+        navigate_chatgpt(page, "https://chatgpt.com/", wait_until="domcontentloaded", timeout=120000)
         wait_chatgpt_post_action_settle(page)
         prepare_chatgpt_page(page)
 
@@ -912,7 +949,7 @@ def click_chatgpt_new_chat(page) -> None:
             continue
 
     throttle_chatgpt_request("browse", "goto_chatgpt_home_fallback")
-    page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=120000)
+    navigate_chatgpt(page, "https://chatgpt.com/", wait_until="domcontentloaded", timeout=120000)
     wait_chatgpt_post_action_settle(page, multiplier=1.2)
     prepare_chatgpt_page(page)
     current_chatgpt_input_locator(page)
@@ -930,7 +967,7 @@ def open_chatgpt_target(
         target_url = "https://chatgpt.com/"
 
     throttle_chatgpt_request("browse", f"open_target:{target_url}")
-    page.goto(target_url, wait_until="domcontentloaded", timeout=120000)
+    navigate_chatgpt(page, target_url, wait_until="domcontentloaded", timeout=120000)
     wait_chatgpt_post_action_settle(page)
 
     host = get_url_host(page.url)
@@ -948,7 +985,7 @@ def open_chatgpt_target(
         entries = load_chatgpt_sidebar_entries(page, target_url=target_url)
         chosen = find_chatgpt_sidebar_entry(entries, conversation_id=conversation_id, title_contains=title_contains)
         throttle_chatgpt_request("browse", f"open_existing_chat:{chosen.get('conversation_id') or chosen.get('title') or 'chat'}")
-        page.goto(chosen["href"], wait_until="domcontentloaded", timeout=120000)
+        navigate_chatgpt(page, chosen["href"], wait_until="domcontentloaded", timeout=120000)
         wait_for_chatgpt_conversation(page)
         wait_chatgpt_post_action_settle(page)
         return {
@@ -1146,7 +1183,7 @@ def delete_current_chatgpt_conversation(page, expected_conversation_id: str = ""
         try:
             api_delete = delete_chatgpt_conversation_via_api(page, expected_conversation_id)
             throttle_chatgpt_request("browse", "post_delete_refresh")
-            page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=120000)
+            navigate_chatgpt(page, "https://chatgpt.com/", wait_until="domcontentloaded", timeout=120000)
             page.wait_for_timeout(1200)
             prepare_chatgpt_page(page)
             completion = wait_for_chatgpt_deletion(page, expected_conversation_id=expected_conversation_id, timeout_seconds=20)
@@ -1254,8 +1291,25 @@ def upload_chatgpt_files(page, paths: List[str]) -> List[str]:
     return resolved_paths
 
 
+def wait_for_chatgpt_send_ready(locator, timeout_seconds: float = 2.5) -> None:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        try:
+            if not locator.is_visible(timeout=250):
+                time.sleep(0.1)
+                continue
+
+            disabled_attr = clean_text(locator.get_attribute("disabled") or "").lower()
+            aria_disabled = clean_text(locator.get_attribute("aria-disabled") or "").lower()
+            if not disabled_attr and aria_disabled not in {"true", "1"}:
+                return
+        except Exception:
+            pass
+
+        time.sleep(0.1)
+
+
 def chatgpt_send_prompt(page) -> None:
-    throttle_chatgpt_request("mutation", "send_prompt")
     button_selectors = [
         'button[aria-label*="Send prompt" i]',
         'button[aria-label*="Send message" i]',
@@ -1266,6 +1320,7 @@ def chatgpt_send_prompt(page) -> None:
         if locator.count() == 0:
             continue
         try:
+            wait_for_chatgpt_send_ready(locator.first)
             safe_click(locator.first, timeout=2500, reason=f"send_prompt:{selector}")
             return
         except Exception:
@@ -2066,7 +2121,7 @@ def cmd_chatgpt_export(args) -> Dict[str, Any]:
         page, created = choose_page(context, page_url_contains=args.page_url_contains)
         try:
             url = args.url or page.url or "https://chatgpt.com/"
-            page.goto(url, wait_until="domcontentloaded", timeout=120000)
+            navigate_chatgpt(page, url, wait_until="domcontentloaded", timeout=120000)
             page.wait_for_timeout(1800)
 
             host = get_url_host(page.url)
@@ -2114,7 +2169,7 @@ def cmd_chatgpt_export(args) -> Dict[str, Any]:
             for index, entry in enumerate(entries, start=1):
                 try:
                     throttle_chatgpt_request("browse", f"export_open:{entry.get('conversation_id') or entry.get('title') or index}")
-                    page.goto(entry["href"], wait_until="domcontentloaded", timeout=120000)
+                    navigate_chatgpt(page, entry["href"], wait_until="domcontentloaded", timeout=120000)
                     wait_for_chatgpt_conversation(page)
                     guard_signal = detect_chatgpt_guard_signal(page)
                     if guard_signal:

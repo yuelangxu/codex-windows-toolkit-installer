@@ -622,7 +622,7 @@ function Update-CodexPowerShellMetadata {
         'codehint', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'zi', 'lg', 'j', 'bench',
         'json', 'yaml', 'grepcode', 'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline', 'doc-scan',
         'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'auth-browser', 'auth-links', 'auth-spec',
-        'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-chatgpt-dump', 'auth-chatgpt-export',
+        'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-chatgpt-browser', 'auth-chatgpt-dump', 'auth-chatgpt-export',
         'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save',
         'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-help'
     )
@@ -689,6 +689,7 @@ function Show-CodexShellHints {
                 (Get-CodexHintEntry -Name 'auth-spec' -Description 'build a download spec file'),
                 (Get-CodexHintEntry -Name 'auth-save' -Description 'save authenticated page content'),
                 (Get-CodexHintEntry -Name 'auth-batch' -Description 'batch-download authenticated assets'),
+                (Get-CodexHintEntry -Name 'auth-chatgpt-browser' -Description 'open the dedicated ChatGPT automation browser'),
                 (Get-CodexHintEntry -Name 'auth-chatgpt-list' -Description 'list ChatGPT conversations' -Example 'auth-chatgpt-list -Limit 20'),
                 (Get-CodexHintEntry -Name 'auth-chatgpt-ask' -Description 'send a prompt and save the result' -Example "auth-chatgpt-ask -NewChat -Prompt 'Summarize this topic.' -DestinationDir C:\Exports"),
                 (Get-CodexHintEntry -Name 'auth-help' -Description 'show auth helper help')
@@ -741,7 +742,7 @@ function whichall {
     [CmdletBinding()]
     param(
         [Parameter(Position = 0, ValueFromRemainingArguments = $true)]
-        [string[]]$Name = @('codehint', 'toolkit-inventory', 'codex', 'curl', 'wget', 'capture2text', 'rg', 'git', 'gh', 'node', 'python', 'fd', 'fzf', 'jq', 'yq', 'uv', 'pnpm', 'bat', 'delta', 'eza', 'zoxide', 'starship', 'lazygit', 'just', 'hyperfine', '7z', 'sd', 'xh', 'mise', 'dust', 'procs', 'nougat', 'ocrmypdf', 'pdftotext', 'pdftoppm', 'mutool', 'tesseract', 'Capture2Text_CLI', 'ollama', 'llava', 'easyocr-read', 'paddleocr-read', 'donut-ocr', 'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline', 'doc-scan', 'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'lg', 'j', 'bench', 'json', 'yaml', 'grepcode', 'auth-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-moodle-spec', 'auth-sharepoint-spec', 'auth-panopto-spec', 'auth-moodle-dump', 'auth-sharepoint-dump', 'auth-panopto-dump', 'auth-chatgpt-dump', 'auth-chatgpt-export', 'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-help')
+        [string[]]$Name = @('codehint', 'toolkit-inventory', 'codex', 'curl', 'wget', 'capture2text', 'rg', 'git', 'gh', 'node', 'python', 'fd', 'fzf', 'jq', 'yq', 'uv', 'pnpm', 'bat', 'delta', 'eza', 'zoxide', 'starship', 'lazygit', 'just', 'hyperfine', '7z', 'sd', 'xh', 'mise', 'dust', 'procs', 'nougat', 'ocrmypdf', 'pdftotext', 'pdftoppm', 'mutool', 'tesseract', 'Capture2Text_CLI', 'ollama', 'llava', 'easyocr-read', 'paddleocr-read', 'donut-ocr', 'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline', 'doc-scan', 'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'lg', 'j', 'bench', 'json', 'yaml', 'grepcode', 'auth-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-moodle-spec', 'auth-sharepoint-spec', 'auth-panopto-spec', 'auth-moodle-dump', 'auth-sharepoint-dump', 'auth-panopto-dump', 'auth-chatgpt-browser', 'auth-chatgpt-dump', 'auth-chatgpt-export', 'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-help')
     )
 
     foreach ($query in $Name) {
@@ -786,7 +787,7 @@ function Show-CodexToolkitInventory {
         }
         @{
             Title = 'Web Auth'
-            Names = @('auth-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-chatgpt-dump', 'auth-chatgpt-export', 'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-help')
+            Names = @('auth-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-chatgpt-browser', 'auth-chatgpt-dump', 'auth-chatgpt-export', 'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-help')
         }
     )
 
@@ -1049,6 +1050,8 @@ function Initialize-CodexShell {
     if ([string]::IsNullOrWhiteSpace($env:CODEX_DOC_SCAN_SAMPLE_CHARS)) { $env:CODEX_DOC_SCAN_SAMPLE_CHARS = '1400' }
     if ([string]::IsNullOrWhiteSpace($env:CODEX_AUTH_MIN_REQUEST_INTERVAL_SECONDS)) { $env:CODEX_AUTH_MIN_REQUEST_INTERVAL_SECONDS = '18' }
     if ([string]::IsNullOrWhiteSpace($env:CODEX_AUTH_REQUEST_INTERVAL_JITTER_SECONDS)) { $env:CODEX_AUTH_REQUEST_INTERVAL_JITTER_SECONDS = '3' }
+    if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_CDP_PORT)) { $env:CODEX_CHATGPT_CDP_PORT = '9333' }
+    if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_BROWSER)) { $env:CODEX_CHATGPT_BROWSER = 'edge' }
     if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_BROWSE_DELAY_SECONDS)) { $env:CODEX_CHATGPT_BROWSE_DELAY_SECONDS = '6.5' }
     if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_MUTATION_DELAY_SECONDS)) { $env:CODEX_CHATGPT_MUTATION_DELAY_SECONDS = '18' }
     if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_DELAY_JITTER_SECONDS)) { $env:CODEX_CHATGPT_DELAY_JITTER_SECONDS = '2.5' }
