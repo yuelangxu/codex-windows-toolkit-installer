@@ -1,0 +1,47 @@
+add_newline = true
+command_timeout = 1500
+
+format = """
+$directory\
+$git_branch\
+$git_status\
+$fill\
+$python\
+$nodejs\
+$cmd_duration\
+$line_break\
+$character"""
+
+[directory]
+style = "bold cyan"
+truncation_length = 6
+truncate_to_repo = false
+read_only = " ro"
+
+[git_branch]
+symbol = "git "
+style = "bold green"
+
+[git_status]
+style = "bold yellow"
+format = "([$all_status$ahead_behind]($style))"
+
+[fill]
+symbol = " "
+
+[python]
+style = "yellow"
+format = "[py ${version}](bold yellow) "
+
+[nodejs]
+style = "bold green"
+format = "[node ${version}](bold green) "
+
+[cmd_duration]
+min_time = 500
+format = "[${duration}](dimmed white)"
+
+[character]
+success_symbol = "[PS>](bold blue)"
+error_symbol = "[PS!](bold red)"
+vimcmd_symbol = "[PS<](bold green)"
