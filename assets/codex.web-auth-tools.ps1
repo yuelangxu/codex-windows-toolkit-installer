@@ -515,8 +515,38 @@ function Get-CodexPromptUsageHint {
         '  auth-chatgpt-ask -NewChat -DestinationDir C:\Exports $prompt',
         '  Get-Content -Raw C:\Prompts\ask.txt | auth-chatgpt-ask -NewChat -DestinationDir C:\Exports',
         '  auth-chatgpt-ask -NewChat -DestinationDir C:\Exports -PromptPath C:\Prompts\ask.txt',
+        '  Long or multi-line prompts are auto-spooled through a UTF-8 temp file before they are handed to Python.',
         "Avoid Bash-style single-quoted escaping such as Newton\'s inside a PowerShell single-quoted string."
     ) -join [Environment]::NewLine
+}
+
+function Get-CodexChatGptInlinePromptThreshold {
+    [CmdletBinding()]
+    param()
+
+    $threshold = Get-CodexAuthIntEnvValue -Name 'CODEX_CHATGPT_INLINE_PROMPT_MAX_CHARS' -Default 3500
+    if ($threshold -lt 256) {
+        return 256
+    }
+
+    return $threshold
+}
+
+function New-CodexChatGptPromptTempFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Prompt
+    )
+
+    $spoolRoot = Join-Path (Get-CodexChatGptBrowserStateRoot) 'prompt-spool'
+    New-Item -ItemType Directory -Path $spoolRoot -Force | Out-Null
+
+    $fileName = 'prompt_{0}_{1}.txt' -f (Get-Date -Format 'yyyyMMdd_HHmmssfff'), ([guid]::NewGuid().ToString('N'))
+    $path = Join-Path $spoolRoot $fileName
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($path, $Prompt, $utf8NoBom)
+    return $path
 }
 
 function Start-CodexAuthBrowser {
@@ -583,6 +613,12 @@ function Start-CodexAuthBrowser {
         '--new-window',
         '--no-first-run',
         '--no-default-browser-check',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--disable-features=CalculateNativeWinOcclusion,BackForwardCache',
+        '--force-device-scale-factor=1',
+        '--window-size=1440,1100',
         $Url
     )
 
@@ -1198,6 +1234,7 @@ function Invoke-CodexChatGptPrompt {
         [switch]$ExportHistoryBefore,
         [string]$ResultName,
         [int]$TimeoutSeconds = 300,
+        [int]$MaxTotalSeconds = 0,
         [int]$Port = 0,
         [ValidateSet('edge', 'chrome')]
         [string]$Browser,
@@ -1257,36 +1294,56 @@ function Invoke-CodexChatGptPrompt {
         $resolvedDestinationDir = Resolve-CodexExistingDirectory -Path $DestinationDir -Label 'ChatGPT destination directory'
         $chatgptContext = Initialize-CodexChatGptCommandContext -Browser $Browser -Port $Port -Url $Url -ForceRestartBrowser:$ForceRestartBrowser
         $Port = $chatgptContext.Port
-        $arguments = @('chatgpt-ask', '--cdp', "http://127.0.0.1:$Port", '--url', $Url, '--prompt', $resolvedPrompt, '--destination-dir', $resolvedDestinationDir, '--timeout', $TimeoutSeconds.ToString())
-        if (-not [string]::IsNullOrWhiteSpace($PageUrlContains)) {
-            $arguments += @('--page-url-contains', $PageUrlContains)
-        }
-        if (-not [string]::IsNullOrWhiteSpace($ConversationId)) {
-            $arguments += @('--conversation-id', $ConversationId)
-        }
-        if (-not [string]::IsNullOrWhiteSpace($TitleContains)) {
-            $arguments += @('--title-contains', $TitleContains)
-        }
-        if ($NewChat) {
-            $arguments += '--new-chat'
-        }
-        if ($ExportHistoryBefore) {
-            $arguments += '--export-history-before'
-        }
-        if (-not [string]::IsNullOrWhiteSpace($ResultName)) {
-            $arguments += @('--result-name', $ResultName)
-        }
-        if ($null -ne $AttachmentPath) {
-            foreach ($path in $AttachmentPath) {
-                if ([string]::IsNullOrWhiteSpace($path)) {
-                    continue
+        $promptTransportPath = $null
+        try {
+            $arguments = @('chatgpt-ask', '--cdp', "http://127.0.0.1:$Port", '--url', $Url)
+            $inlinePromptThreshold = Get-CodexChatGptInlinePromptThreshold
+            $usePromptFileTransport = $resolvedPrompt.Length -ge $inlinePromptThreshold -or $resolvedPrompt.Contains("`r") -or $resolvedPrompt.Contains("`n")
+            if ($usePromptFileTransport) {
+                $promptTransportPath = New-CodexChatGptPromptTempFile -Prompt $resolvedPrompt
+                $arguments += @('--prompt-file', $promptTransportPath)
+            } else {
+                $arguments += @('--prompt', $resolvedPrompt)
+            }
+
+            $arguments += @('--destination-dir', $resolvedDestinationDir, '--timeout', $TimeoutSeconds.ToString())
+            if ($MaxTotalSeconds -gt 0) {
+                $arguments += @('--max-total-seconds', $MaxTotalSeconds.ToString())
+            }
+            if (-not [string]::IsNullOrWhiteSpace($PageUrlContains)) {
+                $arguments += @('--page-url-contains', $PageUrlContains)
+            }
+            if (-not [string]::IsNullOrWhiteSpace($ConversationId)) {
+                $arguments += @('--conversation-id', $ConversationId)
+            }
+            if (-not [string]::IsNullOrWhiteSpace($TitleContains)) {
+                $arguments += @('--title-contains', $TitleContains)
+            }
+            if ($NewChat) {
+                $arguments += '--new-chat'
+            }
+            if ($ExportHistoryBefore) {
+                $arguments += '--export-history-before'
+            }
+            if (-not [string]::IsNullOrWhiteSpace($ResultName)) {
+                $arguments += @('--result-name', $ResultName)
+            }
+            if ($null -ne $AttachmentPath) {
+                foreach ($path in $AttachmentPath) {
+                    if ([string]::IsNullOrWhiteSpace($path)) {
+                        continue
+                    }
+                    $resolvedAttachment = (Resolve-Path -LiteralPath $path -ErrorAction Stop).Path
+                    $arguments += @('--attachment', $resolvedAttachment)
                 }
-                $resolvedAttachment = (Resolve-Path -LiteralPath $path -ErrorAction Stop).Path
-                $arguments += @('--attachment', $resolvedAttachment)
+            }
+
+            Invoke-CodexAuthHelper -Arguments $arguments
+        } finally {
+            if (-not [string]::IsNullOrWhiteSpace($promptTransportPath) -and (Test-Path -LiteralPath $promptTransportPath)) {
+                Remove-Item -LiteralPath $promptTransportPath -Force -ErrorAction SilentlyContinue
             }
         }
-
-        Invoke-CodexAuthHelper -Arguments $arguments
     }
 }
 
@@ -1488,16 +1545,21 @@ Codex web-auth helpers
    auth-chatgpt-ask -NewChat -DestinationDir C:\Exports "Read the attached file and summarize it." -AttachmentPath C:\Docs\notes.pdf,C:\Pics\diagram.png
    Get-Content -Raw C:\Prompts\ask.txt | auth-chatgpt-ask -NewChat -DestinationDir C:\Exports
    auth-chatgpt-ask -NewChat -DestinationDir C:\Exports -PromptPath C:\Prompts\ask.txt
+   auth-chatgpt-ask -NewChat -DestinationDir C:\Exports -TimeoutSeconds 120 -MaxTotalSeconds 0 "Write a long, detailed answer without cutting off early."
 
 9. ChatGPT safety note:
    Broad keywords and -SaveAll can touch too many conversations too quickly.
    That may trigger temporary ChatGPT protections or temporary closures.
    ChatGPT commands now auto-prepare their own browser session instead of requiring a separate auth-browser step first.
+   The managed browser session now launches with desktop-sized metrics and background throttling disabled, so minimising or reshaping the window is less likely to break automation.
    If you omit -Limit on a broad ChatGPT export, the tool now auto-caps to a smaller sample and warns first.
    ChatGPT export/ask commands now expect an existing destination directory. If the directory does not exist, they fail fast.
    ChatGPT browser actions are now rate-limited by default across commands, so repeated list/open/ask/delete runs are spaced out automatically.
    Prompt filling and the actual send click are intentionally separate: the request spacing happens before a command starts, but once the prompt is in the box the send action should happen immediately.
    PowerShell parses quotes before auth-chatgpt-ask runs, so prompts with apostrophes should use double quotes, a variable / here-string, pipeline input, or -PromptPath.
+   -TimeoutSeconds now acts as a stall / inactivity timeout while waiting for the reply, not as a hard cap on the whole answer.
+   If you want a true hard cap as well, pass -MaxTotalSeconds. Use 0 to leave the total reply time uncapped.
+   Long or multi-line prompts are automatically spooled through a temp UTF-8 file so large messages do not depend on one giant command-line argument.
    If ChatGPT shows a Too many requests dialog, the tool now tries to click Got it, cool down briefly, and then refresh before retrying.
    ChatGPT deletion now prefers an authenticated API path first and only falls back to UI actions when needed.
    The page helper now injects reduced-motion styles and hides common floating overlays that intercept clicks.

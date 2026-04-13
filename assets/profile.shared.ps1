@@ -1059,6 +1059,7 @@ function Initialize-CodexShell {
     if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_SIDEBAR_SETTLE_SECONDS)) { $env:CODEX_CHATGPT_SIDEBAR_SETTLE_SECONDS = '1' }
     if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_POST_ACTION_SETTLE_SECONDS)) { $env:CODEX_CHATGPT_POST_ACTION_SETTLE_SECONDS = '0.75' }
     if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_POLL_INTERVAL_SECONDS)) { $env:CODEX_CHATGPT_POLL_INTERVAL_SECONDS = '0.5' }
+    if ([string]::IsNullOrWhiteSpace($env:CODEX_CHATGPT_INLINE_PROMPT_MAX_CHARS)) { $env:CODEX_CHATGPT_INLINE_PROMPT_MAX_CHARS = '3500' }
     Initialize-CodexReadLine
     Initialize-CodexOptionalModules
     Initialize-CodexToolAliases

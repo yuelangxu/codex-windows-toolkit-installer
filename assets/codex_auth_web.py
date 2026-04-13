@@ -6,7 +6,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import requests
@@ -59,6 +59,9 @@ CHATGPT_BROAD_KEYWORDS = {
 }
 
 CHATGPT_RATE_LIMIT_STATE_PATH = Path.home() / ".codex" / "web-auth-state" / "chatgpt_rate_limit.json"
+CLI_TEXT_PREVIEW_MAX_CHARS = 12000
+CHATGPT_DESKTOP_VIEWPORT = {"width": 1440, "height": 1100}
+CHATGPT_RUNTIME_PREPARED_PAGES: Set[int] = set()
 
 
 def sanitize(name: str, max_len: int = 160) -> str:
@@ -107,6 +110,52 @@ def env_float(name: str, default: float) -> float:
         return float(raw)
     except Exception:
         return default
+
+
+def env_int(name: str, default: int) -> int:
+    raw = clean_text(os.environ.get(name, ""))
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except Exception:
+        return default
+
+
+def compact_text_for_cli(text: str, max_chars: int = CLI_TEXT_PREVIEW_MAX_CHARS) -> Tuple[str, bool]:
+    value = text or ""
+    if len(value) <= max_chars:
+        return value, False
+
+    notice = "\n...[truncated in CLI output; see saved file for the full text]"
+    keep = max(0, max_chars - len(notice))
+    clipped = value[:keep].rstrip()
+    return f"{clipped}{notice}", True
+
+
+def resolve_chatgpt_prompt_text(args) -> str:
+    prompt_sources = []
+    prompt_text = clean_text(getattr(args, "prompt", ""))
+    prompt_file = clean_text(getattr(args, "prompt_file", ""))
+    prompt_stdin = bool(getattr(args, "prompt_stdin", False))
+
+    if prompt_text:
+        prompt_sources.append("prompt")
+    if prompt_file:
+        prompt_sources.append("prompt-file")
+    if prompt_stdin:
+        prompt_sources.append("prompt-stdin")
+
+    if not prompt_sources:
+        raise RuntimeError("Provide --prompt, --prompt-file, or --prompt-stdin.")
+    if len(prompt_sources) > 1:
+        raise RuntimeError("Use exactly one prompt source: --prompt, --prompt-file, or --prompt-stdin.")
+
+    if prompt_file:
+        return Path(prompt_file).expanduser().resolve().read_text(encoding="utf-8-sig")
+    if prompt_stdin:
+        return sys.stdin.read()
+    return getattr(args, "prompt", "")
 
 
 def filename_from_response(url: str, headers: Dict[str, str], fallback_name: str) -> str:
@@ -890,11 +939,65 @@ def hide_chatgpt_interfering_overlays(page) -> List[str]:
         return []
 
 
+def ensure_chatgpt_runtime_resilience(page) -> Dict[str, Any]:
+    page_key = id(page)
+    if page_key in CHATGPT_RUNTIME_PREPARED_PAGES:
+        return {"already_prepared": True}
+
+    result: Dict[str, Any] = {
+        "desktop_metrics": False,
+        "reduced_motion": False,
+        "default_timeouts": False,
+    }
+
+    try:
+        page.set_default_timeout(15000)
+        page.set_default_navigation_timeout(120000)
+        result["default_timeouts"] = True
+    except Exception:
+        pass
+
+    try:
+        cdp_session = page.context.new_cdp_session(page)
+        try:
+            cdp_session.send(
+                "Emulation.setDeviceMetricsOverride",
+                {
+                    "width": CHATGPT_DESKTOP_VIEWPORT["width"],
+                    "height": CHATGPT_DESKTOP_VIEWPORT["height"],
+                    "deviceScaleFactor": 1,
+                    "mobile": False,
+                    "screenWidth": CHATGPT_DESKTOP_VIEWPORT["width"],
+                    "screenHeight": CHATGPT_DESKTOP_VIEWPORT["height"],
+                },
+            )
+            result["desktop_metrics"] = True
+        except Exception:
+            pass
+        try:
+            cdp_session.send("Emulation.setTouchEmulationEnabled", {"enabled": False})
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    try:
+        page.emulate_media(reduced_motion="reduce")
+        result["reduced_motion"] = True
+    except Exception:
+        pass
+
+    CHATGPT_RUNTIME_PREPARED_PAGES.add(page_key)
+    return result
+
+
 def prepare_chatgpt_page(page) -> Dict[str, Any]:
+    runtime = ensure_chatgpt_runtime_resilience(page)
     inject_chatgpt_reduce_motion_styles(page)
     hidden = hide_chatgpt_interfering_overlays(page)
     dismissed = dismiss_chatgpt_obstructive_dialogs(page, max_rounds=1)
     return {
+        "runtime": runtime,
         "hidden_overlays": dedupe_strings(hidden),
         "dismissed_dialogs": dismissed,
     }
@@ -1338,8 +1441,14 @@ def latest_assistant_message(conversation: Dict[str, Any]) -> Dict[str, Any]:
     return {"index": 0, "role": "assistant", "text": "", "code_blocks": []}
 
 
-def wait_for_chatgpt_answer(page, before_conversation: Dict[str, Any], timeout_seconds: int = 300) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    deadline = time.time() + timeout_seconds
+def wait_for_chatgpt_answer(
+    page,
+    before_conversation: Dict[str, Any],
+    timeout_seconds: int = 300,
+    max_total_seconds: int = 0,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    started_at = time.time()
+    last_progress_at = started_at
     before_last = latest_assistant_message(before_conversation)
     before_text = before_last.get("text") or ""
     before_assistant_count = len(
@@ -1348,9 +1457,17 @@ def wait_for_chatgpt_answer(page, before_conversation: Dict[str, Any], timeout_s
     stable_rounds = 0
     answer_started = False
     previous_text = before_text
+    previous_count = before_assistant_count
+    previous_conversation_id = conversation_id_from_url(before_conversation.get("url") or page.url or "")
     retryable_guard_count = 0
 
-    while time.time() < deadline:
+    while True:
+        now = time.time()
+        if max_total_seconds > 0 and (now - started_at) > max_total_seconds:
+            raise RuntimeError(
+                f"Timed out after {max_total_seconds} seconds overall while waiting for ChatGPT to finish responding."
+            )
+
         dismiss_chatgpt_obstructive_dialogs(page, max_rounds=1)
         guard_signal = detect_chatgpt_guard_signal(page)
         if guard_signal:
@@ -1367,6 +1484,7 @@ def wait_for_chatgpt_answer(page, before_conversation: Dict[str, Any], timeout_s
         ]
         current_count = len(assistant_messages)
         current_text = last_assistant.get("text") or ""
+        current_conversation_id = conversation_id_from_url(page.url or "")
         if current_count > before_assistant_count or current_text != before_text:
             answer_started = True
 
@@ -1380,19 +1498,50 @@ def wait_for_chatgpt_answer(page, before_conversation: Dict[str, Any], timeout_s
             except Exception:
                 continue
 
+        progress_detected = False
+        if current_count > previous_count:
+            progress_detected = True
+        if current_text != previous_text:
+            progress_detected = True
+        if current_conversation_id and current_conversation_id != previous_conversation_id:
+            progress_detected = True
+
+        if progress_detected:
+            last_progress_at = now
+
         if answer_started:
             if current_text and current_text == previous_text and not stop_visible:
                 stable_rounds += 1
             else:
                 stable_rounds = 0
 
-            if stable_rounds >= 2 and current_text:
+            if stable_rounds >= 2 and current_text and not stop_visible:
                 return conversation, last_assistant
+        else:
+            if (now - last_progress_at) > timeout_seconds:
+                raise RuntimeError(
+                    f"Timed out waiting for ChatGPT to start responding after {timeout_seconds} seconds."
+                )
+
+        if answer_started:
+            effective_idle_limit = timeout_seconds
+            if stop_visible:
+                effective_idle_limit = max(timeout_seconds * 6, timeout_seconds + 300)
+
+            if (now - last_progress_at) > effective_idle_limit:
+                if stop_visible:
+                    raise RuntimeError(
+                        "ChatGPT appears to be stuck while generating. "
+                        f"No new answer progress was detected for {int(now - last_progress_at)} seconds."
+                    )
+                raise RuntimeError(
+                    f"Timed out waiting for ChatGPT response activity after {timeout_seconds} seconds of inactivity."
+                )
 
         previous_text = current_text
+        previous_count = current_count
+        previous_conversation_id = current_conversation_id or previous_conversation_id
         time.sleep(get_chatgpt_poll_interval_seconds())
-
-    raise RuntimeError("Timed out while waiting for ChatGPT to finish responding.")
 
 
 def build_requests_session_from_context(context, page) -> requests.Session:
@@ -2030,6 +2179,11 @@ def cmd_chatgpt_ask(args) -> Dict[str, Any]:
     destination_dir = ensure_existing_directory(args.destination_dir, "ChatGPT destination directory")
     run_dir = destination_dir / sanitize(args.result_name or f"chatgpt_ask_{time.strftime('%Y%m%d_%H%M%S')}")
     run_dir.mkdir(parents=True, exist_ok=True)
+    prompt_text = resolve_chatgpt_prompt_text(args)
+    if not clean_text(prompt_text):
+        raise RuntimeError("Prompt text is empty after resolving the requested prompt source.")
+    prompt_text_path = run_dir / "user_prompt.txt"
+    write_text(prompt_text_path, prompt_text)
 
     playwright, browser = connect_browser(args.cdp)
     try:
@@ -2050,9 +2204,14 @@ def cmd_chatgpt_ask(args) -> Dict[str, Any]:
 
             before_conversation = extract_chatgpt_conversation_payload(page)
             uploaded_paths = upload_chatgpt_files(page, args.attachment or [])
-            set_chatgpt_prompt_text(page, args.prompt)
+            set_chatgpt_prompt_text(page, prompt_text)
             chatgpt_send_prompt(page)
-            after_conversation, assistant_message = wait_for_chatgpt_answer(page, before_conversation, timeout_seconds=args.timeout)
+            after_conversation, assistant_message = wait_for_chatgpt_answer(
+                page,
+                before_conversation,
+                timeout_seconds=args.timeout,
+                max_total_seconds=args.max_total_seconds,
+            )
             after_conversation["conversation_id"] = conversation_id_from_url(page.url)
             if not after_conversation.get("title"):
                 after_conversation["title"] = after_conversation["conversation_id"] or "conversation"
@@ -2061,6 +2220,8 @@ def cmd_chatgpt_ask(args) -> Dict[str, Any]:
             answer_text = assistant_message.get("text") or ""
             answer_text_path = run_dir / "assistant_answer.txt"
             write_text(answer_text_path, answer_text)
+            prompt_preview, prompt_truncated = compact_text_for_cli(prompt_text)
+            answer_preview, answer_truncated = compact_text_for_cli(answer_text)
 
             files_dir = run_dir / "assistant_files"
             downloaded_files = download_chatgpt_message_files(
@@ -2075,14 +2236,21 @@ def cmd_chatgpt_ask(args) -> Dict[str, Any]:
                 "url": page.url,
                 "conversation_id": after_conversation.get("conversation_id") or conversation_id_from_url(page.url),
                 "title": after_conversation.get("title") or "",
-                "prompt": args.prompt,
+                "prompt": prompt_preview,
+                "prompt_path": str(prompt_text_path),
+                "prompt_char_count": len(prompt_text),
+                "prompt_truncated": prompt_truncated,
                 "uploaded_paths": uploaded_paths,
-                "assistant_text": answer_text,
+                "assistant_text": answer_preview,
                 "assistant_text_path": str(answer_text_path),
+                "assistant_text_char_count": len(answer_text),
+                "assistant_text_truncated": answer_truncated,
                 "downloaded_files": downloaded_files,
                 "history_before": history_before,
                 "history_after": history_after,
                 "output_dir": str(run_dir),
+                "stall_timeout_seconds": args.timeout,
+                "max_total_seconds": args.max_total_seconds,
             }
             result_path = run_dir / "result.json"
             write_text(result_path, json.dumps(result, indent=2, ensure_ascii=False))
@@ -3822,12 +3990,15 @@ def build_parser() -> argparse.ArgumentParser:
     chatgpt_ask.add_argument("--conversation-id")
     chatgpt_ask.add_argument("--title-contains")
     chatgpt_ask.add_argument("--new-chat", action="store_true")
-    chatgpt_ask.add_argument("--prompt", required=True)
+    chatgpt_ask.add_argument("--prompt")
+    chatgpt_ask.add_argument("--prompt-file")
+    chatgpt_ask.add_argument("--prompt-stdin", action="store_true")
     chatgpt_ask.add_argument("--destination-dir", required=True)
     chatgpt_ask.add_argument("--attachment", action="append")
     chatgpt_ask.add_argument("--export-history-before", action="store_true")
     chatgpt_ask.add_argument("--result-name")
     chatgpt_ask.add_argument("--timeout", type=int, default=300)
+    chatgpt_ask.add_argument("--max-total-seconds", type=int, default=0)
 
     batch = subparsers.add_parser("batch")
     batch.add_argument("--cdp", required=True)
