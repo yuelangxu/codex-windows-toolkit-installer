@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Codex Starter Popup</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      margin: 16px;
+      min-width: 260px;
+      color: #112233;
+      background: #f5f7fb;
+    }
+
+    h1 {
+      font-size: 18px;
+      margin: 0 0 10px;
+    }
+
+    p {
+      line-height: 1.4;
+      margin: 0 0 12px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 999px;
+      background: #0f6cbd;
+      color: #ffffff;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    code {
+      background: #e7edf6;
+      padding: 2px 5px;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Codex Starter Popup</h1>
+  <p>This extension ships with the toolkit as a safe automation target.</p>
+  <button id="starter-action" type="button">Mark As Clicked</button>
+  <p id="status">Current hash: <code id="hash-value">none</code></p>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -241,6 +241,21 @@
         }
     )
 
+    WebAuthPythonModules = @(
+        @{
+            Package = 'requests'
+            ImportName = 'requests'
+        }
+        @{
+            Package = 'beautifulsoup4'
+            ImportName = 'bs4'
+        }
+        @{
+            Package = 'playwright'
+            ImportName = 'playwright'
+        }
+    )
+
     PythonModules = @(
         @{
             Package = 'easyocr'

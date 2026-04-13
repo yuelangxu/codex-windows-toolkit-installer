@@ -157,6 +157,20 @@ function Get-Audit {
         Detail = $context.ToolkitGuidePath
     })
 
+    [void]$audit.Add([pscustomobject]@{
+        Component = 'Web-auth toolkit guide'
+        Category = 'Toolkit'
+        Status = if (Test-Path -LiteralPath $context.ToolkitWebAuthGuidePath) { 'Installed' } else { 'Missing' }
+        Detail = $context.ToolkitWebAuthGuidePath
+    })
+
+    [void]$audit.Add([pscustomobject]@{
+        Component = 'Browser extension starter project'
+        Category = 'Toolkit'
+        Status = if (Test-Path -LiteralPath $context.ToolkitBrowserExtensionStarterPath) { 'Installed' } else { 'Missing' }
+        Detail = $context.ToolkitBrowserExtensionStarterPath
+    })
+
     foreach ($module in $script:Manifest.PythonModules) {
         if ($DeepValidation) {
             $state = Get-ToolkitPythonImportState -Context $context -ModuleName $module.ImportName
@@ -178,6 +192,16 @@ function Get-Audit {
         [void]$audit.Add([pscustomobject]@{
             Component = "Python module: $($module.Package)"
             Category = 'Python'
+            Status = if ($state.Installed) { 'Installed' } else { 'Missing' }
+            Detail = $state.Detail
+        })
+    }
+
+    foreach ($module in $script:Manifest.WebAuthPythonModules) {
+        $state = Get-GlobalPythonImportState -ModuleName $module.ImportName
+        [void]$audit.Add([pscustomobject]@{
+            Component = "Web-auth Python module: $($module.Package)"
+            Category = 'WebAuth'
             Status = if ($state.Installed) { 'Installed' } else { 'Missing' }
             Detail = $state.Detail
         })

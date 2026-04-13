@@ -27,6 +27,9 @@ Write-Note ("Toolkit root: {0}" -f $context.ToolkitRoot)
 Write-Note ("Install scope preference: {0}" -f $InstallScope)
 Write-Note ("PowerShell profile integration: {0}" -f $(if ($useProfileIntegration) { 'enabled (default)' } else { 'disabled' }))
 Write-Note ("Recommended extra CLI tools: {0}" -f $(if ($IncludeOptionalPackages) { 'enabled' } else { 'disabled' }))
+Write-Note ("ChatGPT/browser-extension automation: {0}" -f $(if ($useProfileIntegration) { 'will be deployed with proactive web-auth dependency setup' } else { 'available in source, but profile integration is disabled' }))
+Write-Note ("Browser extension starter project: {0}" -f $context.ToolkitBrowserExtensionStarterPath)
+Write-Note ("Web-auth guide: {0}" -f $context.ToolkitWebAuthGuidePath)
 
 $auditScript = Join-Path $script:InstallerRoot 'Audit-CodexWindowsToolkit.ps1'
 $wingetScript = Join-Path $script:InstallerRoot 'Install-CodexWingetPackages.ps1'
@@ -77,4 +80,6 @@ Write-Section 'Final audit'
 
 Write-Host ''
 Write-Host 'Codex Windows Toolkit installation completed.' -ForegroundColor Green
+Write-Host ("ChatGPT and browser-extension automation guide: {0}" -f $context.ToolkitWebAuthGuidePath) -ForegroundColor DarkGray
+Write-Host ("Browser extension starter project: {0}" -f $context.ToolkitBrowserExtensionStarterPath) -ForegroundColor DarkGray
 Write-Host 'Open a new PowerShell or pwsh window to load the refreshed PATH, profile enhancements, and command hints.' -ForegroundColor DarkGray

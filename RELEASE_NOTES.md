@@ -1,5 +1,22 @@
 # Release Notes
 
+## v1.1.0
+
+Installer refresh for the newer authenticated browser automation stack.
+
+### Highlights
+
+- Updated the installer and wizard so the ChatGPT automation commands are treated as first-class installed capabilities instead of post-install drift
+- Added browser-extension automation support to the installed toolkit, including install, list, enable, disable, open, click, and remove flows
+- Added proactive installation of the Python packages required by `codex_auth_web.py`
+- Added a toolkit web-auth guide that documents the managed ChatGPT and browser-extension workflow
+- Added a starter browser-extension project under the toolkit examples directory so fresh machines have a ready local automation target
+- Expanded the installer audit so it now checks the web-auth guide, starter project, and Python-side web-auth dependencies
+
+### Why this release matters
+
+The toolkit no longer stops at shell helpers and OCR. It now bootstraps a much more complete authenticated browser automation environment, which makes Codex more effective on Windows for ChatGPT-driven workflows and browser-extension-assisted tasks.
+
 ## v1.0.0
 
 Initial public release of the Codex Windows Toolkit Installer.

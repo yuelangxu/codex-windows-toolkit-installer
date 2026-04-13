@@ -21,6 +21,9 @@ Write-Note ("PowerShell root: {0}" -f $context.PowerShellRoot)
 Write-Note ("Toolkit root: {0}" -f $context.ToolkitRoot)
 Write-Note ("Cloud-backed documents: {0}" -f $(if ($context.DocumentsRoot -match '\\OneDrive\\') { 'yes (OneDrive detected)' } else { 'no (local Documents detected)' }))
 Write-Note ("Heavy OCR rebuild needed: {0}" -f $(if (Test-ToolkitOcrHealthyQuick -Context $context) { 'no, current OCR stack looks healthy' } else { 'yes, OCR stack needs repair/build' }))
+Write-Note ("Web automation layer: ChatGPT control + browser-extension automation + shared helper script")
+Write-Note ("Web-auth guide path: {0}" -f $context.ToolkitWebAuthGuidePath)
+Write-Note ("Browser extension starter project path: {0}" -f $context.ToolkitBrowserExtensionStarterPath)
 
 Write-Section 'Current Tool Summary'
 & $inventoryScript -ToolkitRoot $context.ToolkitRoot -SummaryOnly
@@ -46,14 +49,17 @@ if ($missingOptional.Count -gt 0) {
     Write-Host 'Recommended extra CLI tools are already present.' -ForegroundColor Green
 }
 
+Write-Host ''
+Write-Host 'The refreshed installer now also deploys ChatGPT automation helpers, browser-extension automation helpers, a web-auth guide, and a starter browser-extension project.' -ForegroundColor DarkGray
+
 $includeOptionalPackages = -not $CoreOnly
 
 if (-not $AutoApprove) {
     Write-Host ''
     Write-Host 'Actions:' -ForegroundColor Cyan
-    Write-Host '  Y = install/repair baseline toolkit and recommended extras'
-    Write-Host '  C = install/repair baseline toolkit only'
-    Write-Host '  L = baseline + extras + pull llava model'
+    Write-Host '  Y = install/repair baseline toolkit, web automation tooling, and recommended extras'
+    Write-Host '  C = install/repair baseline toolkit and web automation tooling only'
+    Write-Host '  L = baseline + web automation tooling + extras + pull llava model'
     Write-Host '  N = cancel'
     $answer = (Read-Host 'Choose Y, C, L, or N').Trim()
 

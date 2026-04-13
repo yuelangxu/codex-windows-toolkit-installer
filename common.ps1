@@ -27,6 +27,7 @@ function Get-ToolkitContext {
         ToolkitBin = (Join-Path $ToolkitRoot 'bin')
         ToolkitScripts = (Join-Path $ToolkitRoot 'scripts')
         ToolkitDocs = (Join-Path $ToolkitRoot 'docs')
+        ToolkitExamples = (Join-Path $ToolkitRoot 'examples')
         ToolkitConfig = (Join-Path $ToolkitRoot 'config')
         ToolkitBackups = (Join-Path $ToolkitRoot 'backups')
         ToolkitVenv = (Join-Path $ToolkitRoot 'venvs\ocr311')
@@ -38,6 +39,8 @@ function Get-ToolkitContext {
         PowerShellScriptsRoot = (Join-Path $powerShellRoot 'Scripts')
         SharedProfileDestination = (Join-Path $powerShellRoot 'profile.shared.ps1')
         ToolkitGuidePath = (Join-Path (Join-Path $ToolkitRoot 'docs') 'Codex-OCR-Toolkit.md')
+        ToolkitWebAuthGuidePath = (Join-Path (Join-Path $ToolkitRoot 'docs') 'Codex-Web-Auth-Toolkit.md')
+        ToolkitBrowserExtensionStarterPath = (Join-Path (Join-Path $ToolkitRoot 'examples') 'browser-extension-starter')
         StarshipConfigDestination = (Join-Path (Join-Path $ToolkitRoot 'config') 'starship.toml')
     }
 }
@@ -269,6 +272,58 @@ function Find-Python311 {
     }
 
     return $null
+}
+
+function Find-ToolkitAutomationPython {
+    $python311 = Find-Python311
+    if (-not [string]::IsNullOrWhiteSpace($python311)) {
+        return $python311
+    }
+
+    $python = Get-Command python -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -ne $python) {
+        if (-not [string]::IsNullOrWhiteSpace($python.Source)) {
+            return $python.Source
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($python.Path)) {
+            return $python.Path
+        }
+
+        return 'python'
+    }
+
+    return $null
+}
+
+function Get-GlobalPythonImportState {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ModuleName,
+
+        [string]$PythonPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PythonPath)) {
+        $PythonPath = Find-ToolkitAutomationPython
+    }
+
+    if ([string]::IsNullOrWhiteSpace($PythonPath)) {
+        return @{
+            Installed = $false
+            Detail = 'No suitable global Python interpreter was found'
+        }
+    }
+
+    & $PythonPath -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('$ModuleName') else 1)" 2>$null
+    return @{
+        Installed = ($LASTEXITCODE -eq 0)
+        Detail = if ($LASTEXITCODE -eq 0) {
+            $PythonPath
+        } else {
+            "Missing import on $PythonPath"
+        }
+    }
 }
 
 function Get-PackageState {

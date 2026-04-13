@@ -35,6 +35,26 @@ function Write-ManagedFile {
     Set-Content -LiteralPath $Path -Value $Content -Encoding UTF8
 }
 
+function Copy-ManagedDirectory {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourcePath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationPath
+    )
+
+    Ensure-Directory -Path $DestinationPath
+    $resolvedSource = (Resolve-Path -LiteralPath $SourcePath -ErrorAction Stop).Path
+
+    foreach ($item in Get-ChildItem -LiteralPath $resolvedSource -Recurse -File -Force) {
+        $relativePath = $item.FullName.Substring($resolvedSource.Length).TrimStart('\')
+        $destinationFile = Join-Path $DestinationPath $relativePath
+        $content = Get-Content -LiteralPath $item.FullName -Raw -ErrorAction Stop
+        Write-ManagedFile -Path $destinationFile -Content $content
+    }
+}
+
 function Ensure-UserPathEntry {
     param(
         [Parameter(Mandatory = $true)]
@@ -53,17 +73,57 @@ function Ensure-UserPathEntry {
     }
 }
 
+function Install-WebAuthPythonDependencies {
+    param(
+        [Parameter(Mandatory = $true)]
+        $Context
+    )
+
+    $pythonPath = Find-ToolkitAutomationPython
+    if ([string]::IsNullOrWhiteSpace($pythonPath)) {
+        Write-Warning 'Skipping proactive web-auth Python dependency install because no suitable Python interpreter was found.'
+        return
+    }
+
+    $missingPackages = New-Object System.Collections.Generic.List[string]
+    foreach ($module in $script:Manifest.WebAuthPythonModules) {
+        $state = Get-GlobalPythonImportState -ModuleName $module.ImportName -PythonPath $pythonPath
+        if (-not $state.Installed) {
+            [void]$missingPackages.Add($module.Package)
+        }
+    }
+
+    if ($missingPackages.Count -eq 0) {
+        Write-Note ("Web-auth Python dependencies already look healthy ({0})." -f $pythonPath)
+        return
+    }
+
+    $packageList = [string]::Join(', ', $missingPackages.ToArray())
+    Write-Host ("Installing web-auth Python dependencies via {0}: {1}" -f $pythonPath, $packageList) -ForegroundColor Yellow
+    & $pythonPath -m pip install --quiet --user --no-warn-script-location @($missingPackages.ToArray())
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to install web-auth Python dependencies: $packageList"
+    }
+}
+
 Write-Section 'Deploying toolkit assets'
 Ensure-Directory -Path $context.ToolkitRoot
 Ensure-Directory -Path $context.ToolkitBackups
 Ensure-Directory -Path $context.ToolkitScripts
 Ensure-Directory -Path $context.ToolkitBin
+Ensure-Directory -Path $context.ToolkitDocs
+Ensure-Directory -Path $context.ToolkitExamples
 Ensure-Directory -Path $context.ToolkitConfig
 Ensure-UserPathEntry -Entry $context.ToolkitBin
 
 foreach ($assetName in @('easyocr_read.py', 'paddleocr_read.py', 'donut_ocr.py', 'ocr_common.ps1', 'ocr_smart.ps1', 'pdf_smart.ps1', 'ocr_models.ps1')) {
     Copy-Item -LiteralPath (Join-Path $script:AssetsRoot $assetName) -Destination (Join-Path $context.ToolkitScripts $assetName) -Force
 }
+
+$webAuthGuideContent = Get-Content -LiteralPath (Join-Path $script:AssetsRoot 'Codex-Web-Auth-Toolkit.md') -Raw
+Write-ManagedFile -Path $context.ToolkitWebAuthGuidePath -Content $webAuthGuideContent
+
+Copy-ManagedDirectory -SourcePath (Join-Path $script:AssetsRoot 'browser-extension-starter') -DestinationPath $context.ToolkitBrowserExtensionStarterPath
 
 $starshipConfig = Get-Content -LiteralPath (Join-Path $script:AssetsRoot 'starship.toml') -Raw
 Write-ManagedFile -Path $context.StarshipConfigDestination -Content $starshipConfig
@@ -79,6 +139,8 @@ if ($IncludeProfileIntegration) {
 
     $authScriptContent = Get-Content -LiteralPath (Join-Path $script:AssetsRoot 'codex_auth_web.py') -Raw
     Write-ManagedFile -Path (Join-Path $context.PowerShellScriptsRoot 'codex_auth_web.py') -Content $authScriptContent
+
+    Install-WebAuthPythonDependencies -Context $context
 
     $sharedContent = Get-Content -LiteralPath (Join-Path $script:AssetsRoot 'profile.shared.ps1') -Raw
     Write-ManagedFile -Path $context.SharedProfileDestination -Content $sharedContent
@@ -157,7 +219,7 @@ foreach ($entry in $wrapperMap.GetEnumerator()) {
 }
 
 if ($IncludeProfileIntegration) {
-    Write-Host 'Assets, wrapper commands, shared profile, and shell prompt config have been deployed.' -ForegroundColor Green
+    Write-Host 'Assets, wrapper commands, shared profile, web-auth guide, extension starter project, and shell prompt config have been deployed.' -ForegroundColor Green
 } else {
-    Write-Host 'Assets, wrapper commands, and shell prompt config have been deployed. Shared profile integration was skipped.' -ForegroundColor Green
+    Write-Host 'Assets, wrapper commands, web-auth guide, extension starter project, and shell prompt config have been deployed. Shared profile integration was skipped.' -ForegroundColor Green
 }

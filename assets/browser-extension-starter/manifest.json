@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Codex Browser Extension Starter",
+  "version": "1.0.0",
+  "description": "Starter browser extension project for Codex PowerShell automation tests.",
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html"
+}

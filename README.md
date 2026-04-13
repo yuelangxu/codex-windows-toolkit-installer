@@ -88,6 +88,7 @@ These commands extend the `authweb` family with authenticated ChatGPT browser au
 They now auto-bootstrap a ChatGPT-ready browser session in one command, and their managed browser state lives under the PowerShell toolkit root instead of the Desktop.
 `auth-chatgpt-ask` also accepts prompt text as a positional argument, pipeline input, or `-PromptPath`, which makes it much more forgiving for LLM-generated PowerShell commands that would otherwise trip over quote escaping.
 Long or multi-line prompts are automatically spooled through a UTF-8 temp file, and the reply timeout is treated as a stall timeout instead of a hard cap on total answer length.
+The installer also preps the Python side of this flow by proactively installing the web-auth helper dependencies that back `codex_auth_web.py`.
 
 ### Browser extension automation helpers
 
@@ -103,6 +104,7 @@ These commands let PowerShell manage Chromium extensions as first-class toolkit 
 You can install an unpacked extension directory, a local zip or CRX package, or a package URL, and the toolkit will copy it into a managed state root under the PowerShell toolkit.
 Enabled extensions are loaded together into the managed automation browser, which means multiple extensions can cooperate in the same Codex-driven session instead of depending on a manually prepared desktop profile.
 The extension helpers can also open an extension popup or options page and click controls inside that UI, which makes extension-based auth, wallet, scraper, or productivity workflows much easier to automate from PowerShell.
+The installer now deploys a browser-extension starter project under `Toolkit\examples\browser-extension-starter`, so a fresh machine has an immediate local target for extension automation tests.
 
 ## Why this improves Codex productivity
 
