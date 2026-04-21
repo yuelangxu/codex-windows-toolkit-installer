@@ -240,7 +240,7 @@ function Get-ToolkitInventoryCommandNames {
         'codehint', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'lg', 'j', 'bench',
         'json', 'yaml', 'grepcode', 'proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear',
         'remote-client-init', 'remote-server-bundle', 'remote-health', 'ss-source-show', 'ss-secret-discover',
-        'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open',
+        'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-client-info', 'ss-client-sync',
         'ss-server-bundle', 'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline',
         'doc-scan', 'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'auth-browser', 'auth-links',
         'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-chatgpt-browser', 'auth-chatgpt-dump',

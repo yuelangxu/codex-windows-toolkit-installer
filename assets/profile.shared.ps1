@@ -630,7 +630,7 @@ function Update-CodexPowerShellMetadata {
     $helperNames = @(
         'codehint', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'zi', 'lg', 'j', 'bench',
         'json', 'yaml', 'grepcode', 'proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear',
-        'remote-client-init', 'remote-server-bundle', 'remote-health', 'ss-source-show', 'ss-secret-discover', 'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-server-bundle',
+        'remote-client-init', 'remote-server-bundle', 'remote-health', 'ss-source-show', 'ss-secret-discover', 'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-client-info', 'ss-client-sync', 'ss-server-bundle',
         'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline', 'doc-scan',
         'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'study-summary', 'study-pack', 'auth-browser', 'auth-links', 'auth-spec',
         'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-recover', 'auth-chatgpt-browser', 'auth-chatgpt-dump', 'auth-chatgpt-export',
@@ -697,6 +697,8 @@ function Show-CodexShellHints {
                 (Get-CodexHintEntry -Name 'ss-secret-clear' -Description 'remove the local active Shadowsocks secret file'),
                 (Get-CodexHintEntry -Name 'ss-profile-new' -Description 'generate official Shadowsocks client/server JSON plus SIP002 URI' -Example 'ss-profile-new -Name dorm-link -Server 203.0.113.8'),
                 (Get-CodexHintEntry -Name 'ss-client-fetch' -Description 'download the official Windows Shadowsocks client into toolkit state' -Example 'ss-client-fetch -Expand'),
+                (Get-CodexHintEntry -Name 'ss-client-info' -Description 'show the official Windows client path, current GUI config summary, and this computer''s local network info'),
+                (Get-CodexHintEntry -Name 'ss-client-sync' -Description 'write discovered Shadowsocks config plus this machine''s local port/LAN settings into official gui-config.json' -Example 'ss-client-sync -StartClient'),
                 (Get-CodexHintEntry -Name 'ss-server-bundle' -Description 'generate a pinned shadowsocks-rust Linux server bundle'),
                 (Get-CodexHintEntry -Name 'proxy-profile-show' -Description 'show the current redacted proxy profile'),
                 (Get-CodexHintEntry -Name 'proxy-profile-set' -Description 'store proxy settings safely in the toolkit config' -Example 'proxy-profile-set -HttpsProxy http://proxy.example:8080 -NoProxy localhost,127.0.0.1')
@@ -759,7 +761,7 @@ function Show-CodexStartupBanner {
         "nav=$($env:CODEX_NAV_MODE)",
         'toolbelt: rg fd fzf jq yq eza z lazygit just hyperfine 7z xh mise dust procs',
         'docs: ocr-smart pdf-smart translate-smart doc-pipeline study-summary study-pack auth-browser auth-recover auth-chatgpt-ask auth-extension-open',
-        'remote: remote-client-init remote-server-bundle remote-health ss-secret-import ss-profile-new ss-client-fetch',
+        'remote: remote-client-init remote-server-bundle remote-health ss-secret-import ss-client-sync ss-client-fetch',
         'hint: codehint'
     )
 
@@ -779,7 +781,7 @@ function whichall {
     [CmdletBinding()]
     param(
         [Parameter(Position = 0, ValueFromRemainingArguments = $true)]
-        [string[]]$Name = @('codehint', 'toolkit-inventory', 'codex', 'curl', 'wget', 'capture2text', 'rg', 'git', 'gh', 'node', 'python', 'fd', 'fzf', 'jq', 'yq', 'uv', 'pnpm', 'bat', 'delta', 'eza', 'zoxide', 'starship', 'lazygit', 'just', 'hyperfine', '7z', 'sd', 'xh', 'mise', 'dust', 'procs', 'nougat', 'ocrmypdf', 'pdftotext', 'pdftoppm', 'mutool', 'tesseract', 'Capture2Text_CLI', 'ollama', 'llava', 'easyocr-read', 'paddleocr-read', 'donut-ocr', 'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline', 'doc-scan', 'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'study-summary', 'study-pack', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'lg', 'j', 'bench', 'json', 'yaml', 'grepcode', 'proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear', 'remote-client-init', 'remote-server-bundle', 'remote-health', 'ss-source-show', 'ss-secret-discover', 'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-server-bundle', 'auth-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-recover', 'auth-moodle-spec', 'auth-sharepoint-spec', 'auth-panopto-spec', 'auth-moodle-dump', 'auth-sharepoint-dump', 'auth-panopto-dump', 'auth-chatgpt-browser', 'auth-chatgpt-dump', 'auth-chatgpt-export', 'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-extension-install', 'auth-extension-list', 'auth-extension-enable', 'auth-extension-disable', 'auth-extension-open', 'auth-extension-click', 'auth-extension-remove', 'auth-help')
+        [string[]]$Name = @('codehint', 'toolkit-inventory', 'codex', 'curl', 'wget', 'capture2text', 'rg', 'git', 'gh', 'node', 'python', 'fd', 'fzf', 'jq', 'yq', 'uv', 'pnpm', 'bat', 'delta', 'eza', 'zoxide', 'starship', 'lazygit', 'just', 'hyperfine', '7z', 'sd', 'xh', 'mise', 'dust', 'procs', 'nougat', 'ocrmypdf', 'pdftotext', 'pdftoppm', 'mutool', 'tesseract', 'Capture2Text_CLI', 'ollama', 'llava', 'easyocr-read', 'paddleocr-read', 'donut-ocr', 'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline', 'doc-scan', 'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'study-summary', 'study-pack', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'lg', 'j', 'bench', 'json', 'yaml', 'grepcode', 'proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear', 'remote-client-init', 'remote-server-bundle', 'remote-health', 'ss-source-show', 'ss-secret-discover', 'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-client-info', 'ss-client-sync', 'ss-server-bundle', 'auth-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-recover', 'auth-moodle-spec', 'auth-sharepoint-spec', 'auth-panopto-spec', 'auth-moodle-dump', 'auth-sharepoint-dump', 'auth-panopto-dump', 'auth-chatgpt-browser', 'auth-chatgpt-dump', 'auth-chatgpt-export', 'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-extension-install', 'auth-extension-list', 'auth-extension-enable', 'auth-extension-disable', 'auth-extension-open', 'auth-extension-click', 'auth-extension-remove', 'auth-help')
     )
 
     foreach ($query in $Name) {
@@ -816,7 +818,7 @@ function Show-CodexToolkitInventory {
         }
         @{
             Title = 'Remote / Network'
-            Names = @('proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear', 'remote-client-init', 'remote-server-bundle', 'remote-health', 'ss-source-show', 'ss-secret-discover', 'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-server-bundle')
+            Names = @('proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear', 'remote-client-init', 'remote-server-bundle', 'remote-health', 'ss-source-show', 'ss-secret-discover', 'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-client-info', 'ss-client-sync', 'ss-server-bundle')
         }
         @{
             Title = 'Core CLI'

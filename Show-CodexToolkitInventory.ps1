@@ -21,7 +21,7 @@ $groups = @(
     }
     @{
         Title = 'Remote / Network'
-        Names = @('proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear', 'remote-client-init', 'remote-server-bundle', 'remote-health', 'ss-source-show', 'ss-secret-discover', 'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-server-bundle')
+        Names = @('proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear', 'remote-client-init', 'remote-server-bundle', 'remote-health', 'ss-source-show', 'ss-secret-discover', 'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-client-info', 'ss-client-sync', 'ss-server-bundle')
     }
     @{
         Title = 'Core CLI'

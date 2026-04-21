@@ -18,6 +18,8 @@ The toolkit reads `lia.txt` if it exists and uses those URLs as the source ancho
 - `ss-profile-new`
 - `ss-client-fetch`
 - `ss-client-open`
+- `ss-client-info`
+- `ss-client-sync`
 - `ss-server-bundle`
 
 ## Private secret import
@@ -46,6 +48,20 @@ Download and expand the official Windows client:
 
 ```powershell
 ss-client-fetch -Expand
+```
+
+Inspect the official client plus this computer's local network facts:
+
+```powershell
+ss-client-info
+```
+
+Write discovered private config plus this machine's local port/LAN settings into the official `gui-config.json`:
+
+```powershell
+ss-client-sync
+ss-client-sync -StartClient
+ss-client-sync -ShareOverLan -LocalPort 1090
 ```
 
 Generate matching client and server configs in official JSON format:

@@ -134,6 +134,37 @@ function Get-CodexShadowsocksWindowsClientRoot {
     return (Join-Path (Get-CodexShadowsocksStateRoot) 'windows-client')
 }
 
+function Get-CodexShadowsocksWindowsExecutablePath {
+    [CmdletBinding()]
+    param()
+
+    $clientRoot = Get-CodexShadowsocksWindowsClientRoot
+    if (-not (Test-Path -LiteralPath $clientRoot)) {
+        return $null
+    }
+
+    $candidate = Get-ChildItem -LiteralPath $clientRoot -Recurse -Filter 'Shadowsocks.exe' -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if ($null -eq $candidate) {
+        return $null
+    }
+
+    return $candidate.FullName
+}
+
+function Get-CodexShadowsocksWindowsConfigPath {
+    [CmdletBinding()]
+    param()
+
+    $exePath = Get-CodexShadowsocksWindowsExecutablePath
+    if ([string]::IsNullOrWhiteSpace($exePath)) {
+        return $null
+    }
+
+    return (Join-Path (Split-Path -Parent $exePath) 'gui-config.json')
+}
+
 function Get-CodexShadowsocksExampleRoot {
     [CmdletBinding()]
     param()
@@ -620,6 +651,103 @@ function Get-CodexShadowsocksSecretSummaryObject {
         Sip002Uri        = 'stored locally only'
         ActiveSecretPath = $ActiveSecretPath
     }
+}
+
+function Get-CodexLocalComputerNetworkInfo {
+    [CmdletBinding()]
+    param()
+
+    $ipv4Addresses = New-Object System.Collections.Generic.List[string]
+    try {
+        foreach ($address in Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.IPAddress -notlike '127.*' -and $_.PrefixOrigin -ne 'WellKnown' }) {
+            if (-not [string]::IsNullOrWhiteSpace($address.IPAddress)) {
+                [void]$ipv4Addresses.Add($address.IPAddress)
+            }
+        }
+    } catch {
+        try {
+            $hostAddresses = [System.Net.Dns]::GetHostAddresses($env:COMPUTERNAME)
+            foreach ($address in $hostAddresses) {
+                if ($address.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork -and $address.IPAddressToString -notlike '127.*') {
+                    [void]$ipv4Addresses.Add($address.IPAddressToString)
+                }
+            }
+        } catch {
+        }
+    }
+
+    $preferredAddress = if ($ipv4Addresses.Count -gt 0) { $ipv4Addresses[0] } else { '127.0.0.1' }
+    return [pscustomobject]@{
+        ComputerName = $env:COMPUTERNAME
+        UserName     = $env:USERNAME
+        HostName     = [System.Net.Dns]::GetHostName()
+        IPv4         = @($ipv4Addresses | Select-Object -Unique)
+        PreferredIPv4 = $preferredAddress
+    }
+}
+
+function Get-CodexShadowsocksGuiConfig {
+    [CmdletBinding()]
+    param(
+        [string]$ConfigPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
+        $ConfigPath = Get-CodexShadowsocksWindowsConfigPath
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ConfigPath) -or -not (Test-Path -LiteralPath $ConfigPath)) {
+        return $null
+    }
+
+    return (Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json -ErrorAction Stop)
+}
+
+function Get-CodexShadowsocksImportSource {
+    [CmdletBinding()]
+    param(
+        [string]$Name,
+        [string]$SourcePath
+    )
+
+    $secret = Find-CodexShadowsocksSecret -SourcePath $SourcePath
+    if ($null -eq $secret) {
+        return $null
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($Name)) {
+        $secret.Name = $Name
+    }
+
+    return $secret
+}
+
+function Stop-CodexShadowsocksWindowsProcess {
+    [CmdletBinding()]
+    param()
+
+    $running = @(Get-Process Shadowsocks -ErrorAction SilentlyContinue)
+    if ($running.Count -eq 0) {
+        return $false
+    }
+
+    foreach ($process in $running) {
+        try {
+            if ($process.MainWindowHandle -ne 0) {
+                [void]$process.CloseMainWindow()
+            }
+        } catch {
+        }
+    }
+
+    Start-Sleep -Milliseconds 900
+    $remaining = @(Get-Process Shadowsocks -ErrorAction SilentlyContinue)
+    if ($remaining.Count -gt 0) {
+        $remaining | Stop-Process -Force
+        Start-Sleep -Milliseconds 700
+    }
+
+    return $true
 }
 
 function Invoke-CodexGitHubApiJson {
@@ -1780,6 +1908,161 @@ function ss-client-open {
     [pscustomobject]@{
         LaunchPath = $ExecutablePath
         Started    = $true
+    }
+}
+
+function ss-client-info {
+    [CmdletBinding()]
+    param()
+
+    $computer = Get-CodexLocalComputerNetworkInfo
+    $configPath = Get-CodexShadowsocksWindowsConfigPath
+    $guiConfig = Get-CodexShadowsocksGuiConfig -ConfigPath $configPath
+    $currentServer = $null
+    if ($null -ne $guiConfig -and $null -ne $guiConfig.configs -and @($guiConfig.configs).Count -gt 0) {
+        $index = 0
+        if ($null -ne $guiConfig.PSObject.Properties['index']) {
+            try {
+                $index = [int]$guiConfig.index
+            } catch {
+                $index = 0
+            }
+        }
+
+        $configs = @($guiConfig.configs)
+        if ($index -lt 0 -or $index -ge $configs.Count) {
+            $index = 0
+        }
+
+        $currentServer = $configs[$index]
+    }
+
+    $process = Get-Process Shadowsocks -ErrorAction SilentlyContinue | Select-Object -First 1
+
+    [pscustomobject]@{
+        ClientExecutable     = Get-CodexShadowsocksWindowsExecutablePath
+        ClientConfigPath     = $configPath
+        ClientRunning        = ($null -ne $process)
+        PortableMode         = if ($null -eq $guiConfig) { $null } else { [bool]$guiConfig.portableMode }
+        Enabled              = if ($null -eq $guiConfig) { $null } else { [bool]$guiConfig.enabled }
+        GlobalMode           = if ($null -eq $guiConfig) { $null } else { [bool]$guiConfig.global }
+        ShareOverLan         = if ($null -eq $guiConfig) { $null } else { [bool]$guiConfig.shareOverLan }
+        LocalPort            = if ($null -eq $guiConfig) { $null } else { [int]$guiConfig.localPort }
+        CurrentServer        = if ($null -eq $currentServer) { '' } else { Format-CodexShadowsocksHostRedacted -HostValue ([string]$currentServer.server) }
+        CurrentServerPort    = if ($null -eq $currentServer) { $null } else { [int]$currentServer.server_port }
+        CurrentMethod        = if ($null -eq $currentServer) { '' } else { [string]$currentServer.method }
+        ComputerName         = $computer.ComputerName
+        HostName             = $computer.HostName
+        UserName             = $computer.UserName
+        PreferredIPv4        = $computer.PreferredIPv4
+        IPv4                 = $computer.IPv4
+    }
+}
+
+function ss-client-sync {
+    [CmdletBinding()]
+    param(
+        [string]$Name,
+        [string]$SourcePath,
+        [int]$LocalPort,
+        [switch]$EnableClient,
+        [switch]$GlobalMode,
+        [switch]$ShareOverLan,
+        [switch]$RestartClient,
+        [switch]$StartClient
+    )
+
+    $secret = Get-CodexShadowsocksImportSource -Name $Name -SourcePath $SourcePath
+    if ($null -eq $secret) {
+        throw 'No Shadowsocks source could be discovered. Put a real config in a local private file or env var, then rerun ss-client-sync.'
+    }
+
+    $exePath = Get-CodexShadowsocksWindowsExecutablePath
+    if ([string]::IsNullOrWhiteSpace($exePath)) {
+        $fetch = ss-client-fetch -Expand
+        $exePath = $fetch.LaunchPath
+    }
+
+    if ([string]::IsNullOrWhiteSpace($exePath) -or -not (Test-Path -LiteralPath $exePath)) {
+        throw 'Official Shadowsocks Windows client is not available. Run ss-client-fetch -Expand first.'
+    }
+
+    $configPath = Join-Path (Split-Path -Parent $exePath) 'gui-config.json'
+    $currentConfig = Get-CodexShadowsocksGuiConfig -ConfigPath $configPath
+    if ($null -eq $currentConfig) {
+        throw "Unable to load gui-config.json: $configPath"
+    }
+
+    $wasRunning = Stop-CodexShadowsocksWindowsProcess
+
+    $effectiveLocalPort = if ($PSBoundParameters.ContainsKey('LocalPort')) { $LocalPort } elseif ($secret.LocalPort -gt 0) { $secret.LocalPort } else { [int]$currentConfig.localPort }
+    $newServerConfig = [ordered]@{
+        server        = $secret.Server
+        server_port   = $secret.ServerPort
+        password      = $secret.Password
+        method        = $secret.Method
+        remarks       = $secret.Name
+        timeout       = 5
+        warnLegacyUrl = $false
+    }
+
+    $currentConfig.configs = @([pscustomobject]$newServerConfig)
+    $currentConfig.index = 0
+    $currentConfig.localPort = $effectiveLocalPort
+    $currentConfig.shareOverLan = $ShareOverLan.IsPresent
+    $currentConfig.global = $GlobalMode.IsPresent
+    $currentConfig.enabled = $EnableClient.IsPresent
+    $currentConfig.firstRun = $false
+    $currentConfig.portableMode = $true
+
+    Backup-CodexNetworkFile -Path $configPath | Out-Null
+    Set-Content -LiteralPath $configPath -Value ($currentConfig | ConvertTo-Json -Depth 12) -Encoding utf8
+
+    $writtenConfig = Get-CodexShadowsocksGuiConfig -ConfigPath $configPath
+    $writtenServer = $null
+    if ($null -ne $writtenConfig -and $null -ne $writtenConfig.configs -and @($writtenConfig.configs).Count -gt 0) {
+        $writtenServer = @($writtenConfig.configs)[0]
+    }
+
+    if (
+        $null -eq $writtenConfig -or
+        $null -eq $writtenServer -or
+        [string]$writtenServer.server -ne $secret.Server -or
+        [int]$writtenServer.server_port -ne $secret.ServerPort -or
+        [string]$writtenServer.password -ne $secret.Password -or
+        [string]$writtenServer.method -ne $secret.Method -or
+        [int]$writtenConfig.localPort -ne $effectiveLocalPort
+    ) {
+        throw "Failed to persist Shadowsocks Windows client config at $configPath"
+    }
+
+    $computer = Get-CodexLocalComputerNetworkInfo
+    if ($wasRunning -or $RestartClient) {
+        Start-Process -FilePath $exePath | Out-Null
+    } elseif ($StartClient) {
+        if ($null -eq (Get-Process Shadowsocks -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+            Start-Process -FilePath $exePath | Out-Null
+        }
+    }
+
+    [pscustomobject]@{
+        Updated            = $true
+        ClientExecutable   = $exePath
+        ClientConfigPath   = $configPath
+        ProfileName        = $secret.Name
+        SourceKind         = $secret.SourceKind
+        Source             = $secret.Source
+        Server             = Format-CodexShadowsocksHostRedacted -HostValue $secret.Server
+        ServerPort         = $secret.ServerPort
+        Method             = $secret.Method
+        LocalPort          = $effectiveLocalPort
+        Enabled            = $EnableClient.IsPresent
+        GlobalMode         = $GlobalMode.IsPresent
+        ShareOverLan       = $ShareOverLan.IsPresent
+        ComputerName       = $computer.ComputerName
+        PreferredIPv4      = $computer.PreferredIPv4
+        IPv4               = $computer.IPv4
+        RestartedOrStarted = ($wasRunning -or $RestartClient.IsPresent -or $StartClient.IsPresent)
     }
 }
 

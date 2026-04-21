@@ -1,5 +1,19 @@
 # Release Notes
 
+## v1.3.0
+
+Official Shadowsocks Windows client handoff from PowerShell.
+
+### Highlights
+
+- Added `ss-client-info` to show the official `shadowsocks-windows` executable, current `gui-config.json` summary, and this computer's local network facts
+- Added `ss-client-sync` so PowerShell can write discovered private Shadowsocks config plus local client settings directly into the official Windows client's `gui-config.json`
+- Expanded the profile hints, inventory, and Shadowsocks guide to document the new official-client handoff workflow
+
+### Why this release matters
+
+The toolkit now does more than download the official client. It can bridge local private machine state into the official Shadowsocks GUI config, which removes a lot of manual clicking while still keeping secrets on the local machine only.
+
 ## v1.2.0
 
 Installer refresh for the network toolkit and secret-safe Shadowsocks bootstrap flow.
