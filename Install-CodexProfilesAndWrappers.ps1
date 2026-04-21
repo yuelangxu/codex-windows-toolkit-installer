@@ -106,6 +106,38 @@ function Install-WebAuthPythonDependencies {
     }
 }
 
+function Invoke-ShadowsocksPrivateBootstrap {
+    param(
+        [Parameter(Mandatory = $true)]
+        $Context
+    )
+
+    $networkToolsPath = Join-Path $Context.PowerShellRoot 'codex.network-tools.ps1'
+    if (-not (Test-Path -LiteralPath $networkToolsPath)) {
+        return
+    }
+
+    try {
+        . $networkToolsPath
+        $importResult = ss-secret-import -Quiet -FetchWindowsClient -ExpandWindowsClient
+        if ($null -eq $importResult) {
+            return
+        }
+
+        if ($importResult.PSObject.Properties['Imported'] -and $importResult.Imported) {
+            Write-Note ("Imported local-only Shadowsocks secret into toolkit state ({0})." -f $importResult.ActiveSecretPath)
+            if ($importResult.PSObject.Properties['WindowsClientPath'] -and -not [string]::IsNullOrWhiteSpace($importResult.WindowsClientPath)) {
+                Write-Note ("Official Windows Shadowsocks client prepared at {0}." -f $importResult.WindowsClientPath)
+            }
+            return
+        }
+
+        Write-Note 'No local Shadowsocks private config source was detected. Public repo contents remain secret-free.'
+    } catch {
+        Write-Warning ("Shadowsocks private bootstrap skipped: {0}" -f $_.Exception.Message)
+    }
+}
+
 Write-Section 'Deploying toolkit assets'
 Ensure-Directory -Path $context.ToolkitRoot
 Ensure-Directory -Path $context.ToolkitBackups
@@ -114,6 +146,7 @@ Ensure-Directory -Path $context.ToolkitBin
 Ensure-Directory -Path $context.ToolkitDocs
 Ensure-Directory -Path $context.ToolkitExamples
 Ensure-Directory -Path $context.ToolkitConfig
+Ensure-Directory -Path $context.ToolkitPrivateConfig
 Ensure-UserPathEntry -Entry $context.ToolkitBin
 
 foreach ($assetName in @('easyocr_read.py', 'paddleocr_read.py', 'donut_ocr.py', 'ocr_common.ps1', 'ocr_smart.ps1', 'pdf_smart.ps1', 'ocr_models.ps1')) {
@@ -122,6 +155,12 @@ foreach ($assetName in @('easyocr_read.py', 'paddleocr_read.py', 'donut_ocr.py',
 
 $webAuthGuideContent = Get-Content -LiteralPath (Join-Path $script:AssetsRoot 'Codex-Web-Auth-Toolkit.md') -Raw
 Write-ManagedFile -Path $context.ToolkitWebAuthGuidePath -Content $webAuthGuideContent
+
+$networkGuideContent = Get-Content -LiteralPath (Join-Path $script:AssetsRoot 'Codex-Network-Toolkit.md') -Raw
+Write-ManagedFile -Path $context.ToolkitNetworkGuidePath -Content $networkGuideContent
+
+$shadowsocksGuideContent = Get-Content -LiteralPath (Join-Path $script:AssetsRoot 'Codex-Shadowsocks-Toolkit.md') -Raw
+Write-ManagedFile -Path $context.ToolkitShadowsocksGuidePath -Content $shadowsocksGuideContent
 
 Copy-ManagedDirectory -SourcePath (Join-Path $script:AssetsRoot 'browser-extension-starter') -DestinationPath $context.ToolkitBrowserExtensionStarterPath
 
@@ -132,7 +171,7 @@ if ($IncludeProfileIntegration) {
     Ensure-Directory -Path $context.PowerShellRoot
     Ensure-Directory -Path $context.PowerShellScriptsRoot
 
-    foreach ($profileAsset in @('codex.document-tools.ps1', 'codex.ocr-translate-tools.ps1', 'codex.web-auth-tools.ps1')) {
+    foreach ($profileAsset in @('codex.document-tools.ps1', 'codex.ocr-translate-tools.ps1', 'codex.web-auth-tools.ps1', 'codex.network-tools.ps1')) {
         $profileContent = Get-Content -LiteralPath (Join-Path $script:AssetsRoot $profileAsset) -Raw
         Write-ManagedFile -Path (Join-Path $context.PowerShellRoot $profileAsset) -Content $profileContent
     }
@@ -161,6 +200,8 @@ if (Test-Path -LiteralPath `$sharedProfile) {
     )) {
         Write-ManagedFile -Path $stubPath -Content $stubContent
     }
+
+    Invoke-ShadowsocksPrivateBootstrap -Context $context
 }
 
 $wrapperMap = @{
@@ -219,7 +260,7 @@ foreach ($entry in $wrapperMap.GetEnumerator()) {
 }
 
 if ($IncludeProfileIntegration) {
-    Write-Host 'Assets, wrapper commands, shared profile, web-auth guide, extension starter project, and shell prompt config have been deployed.' -ForegroundColor Green
+    Write-Host 'Assets, wrapper commands, shared profile, network/web-auth guides, extension starter project, and shell prompt config have been deployed.' -ForegroundColor Green
 } else {
-    Write-Host 'Assets, wrapper commands, web-auth guide, extension starter project, and shell prompt config have been deployed. Shared profile integration was skipped.' -ForegroundColor Green
+    Write-Host 'Assets, wrapper commands, network/web-auth guides, extension starter project, and shell prompt config have been deployed. Shared profile integration was skipped.' -ForegroundColor Green
 }

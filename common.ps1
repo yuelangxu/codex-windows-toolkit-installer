@@ -29,6 +29,7 @@ function Get-ToolkitContext {
         ToolkitDocs = (Join-Path $ToolkitRoot 'docs')
         ToolkitExamples = (Join-Path $ToolkitRoot 'examples')
         ToolkitConfig = (Join-Path $ToolkitRoot 'config')
+        ToolkitPrivateConfig = (Join-Path (Join-Path $ToolkitRoot 'config') 'private')
         ToolkitBackups = (Join-Path $ToolkitRoot 'backups')
         ToolkitVenv = (Join-Path $ToolkitRoot 'venvs\ocr311')
         ToolkitVenvPython = (Join-Path (Join-Path $ToolkitRoot 'venvs\ocr311') 'Scripts\python.exe')
@@ -39,7 +40,10 @@ function Get-ToolkitContext {
         PowerShellScriptsRoot = (Join-Path $powerShellRoot 'Scripts')
         SharedProfileDestination = (Join-Path $powerShellRoot 'profile.shared.ps1')
         ToolkitGuidePath = (Join-Path (Join-Path $ToolkitRoot 'docs') 'Codex-OCR-Toolkit.md')
+        ToolkitNetworkGuidePath = (Join-Path (Join-Path $ToolkitRoot 'docs') 'Codex-Network-Toolkit.md')
+        ToolkitShadowsocksGuidePath = (Join-Path (Join-Path $ToolkitRoot 'docs') 'Codex-Shadowsocks-Toolkit.md')
         ToolkitWebAuthGuidePath = (Join-Path (Join-Path $ToolkitRoot 'docs') 'Codex-Web-Auth-Toolkit.md')
+        ToolkitShadowsocksActiveSecretPath = (Join-Path (Join-Path (Join-Path $ToolkitRoot 'config') 'private') 'shadowsocks.active.json')
         ToolkitBrowserExtensionStarterPath = (Join-Path (Join-Path $ToolkitRoot 'examples') 'browser-extension-starter')
         StarshipConfigDestination = (Join-Path (Join-Path $ToolkitRoot 'config') 'starship.toml')
     }
@@ -234,7 +238,10 @@ function Get-ToolkitInventoryCommandNames {
 
     foreach ($name in @(
         'codehint', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'lg', 'j', 'bench',
-        'json', 'yaml', 'grepcode', 'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline',
+        'json', 'yaml', 'grepcode', 'proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear',
+        'remote-client-init', 'remote-server-bundle', 'remote-health', 'ss-source-show', 'ss-secret-discover',
+        'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open',
+        'ss-server-bundle', 'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline',
         'doc-scan', 'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'auth-browser', 'auth-links',
         'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-chatgpt-browser', 'auth-chatgpt-dump',
         'auth-chatgpt-export', 'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open',

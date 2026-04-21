@@ -20,6 +20,10 @@ $groups = @(
         Names = @('codehint', 'toolkit-inventory', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'lg', 'j', 'bench', 'json', 'yaml', 'grepcode')
     }
     @{
+        Title = 'Remote / Network'
+        Names = @('proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear', 'remote-client-init', 'remote-server-bundle', 'remote-health', 'ss-source-show', 'ss-secret-discover', 'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-server-bundle')
+    }
+    @{
         Title = 'Core CLI'
         Names = @('git', 'gh', 'rg', 'fd', 'fzf', 'jq', 'yq', 'uv', 'pnpm', 'bat', 'delta', 'eza', 'zoxide', 'starship', 'lazygit', 'just', 'hyperfine', '7z', 'sd', 'xh', 'mise', 'dust', 'procs')
     }

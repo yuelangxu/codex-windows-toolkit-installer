@@ -74,6 +74,17 @@ This installer packages those rough edges into a source-visible, repairable Powe
 - `codex.document-tools.ps1`
 - `codex.ocr-translate-tools.ps1`
 - `codex.web-auth-tools.ps1`
+- `codex.network-tools.ps1`
+
+### Remote and network workflow
+
+- `proxy-profile-set`, `proxy-profile-show`, `proxy-profile-clear`
+- `remote-client-init`, `remote-server-bundle`, `remote-health`
+- `ss-source-show`, `ss-secret-discover`, `ss-secret-import`, `ss-secret-clear`
+- `ss-profile-new`, `ss-client-fetch`, `ss-client-open`, `ss-server-bundle`
+
+This layer gives Codex a safer SSH baseline, a managed proxy profile, official Shadowsocks source discovery, and a local-only import path for private client/server details.
+The public repo stays secret-free: the installer only looks for private Shadowsocks material in local environment variables, local private files such as `Desktop\lia.private.txt`, or existing local client configs, then writes the active secret only into the local toolkit state under `Documents\PowerShell\Toolkit\config\private`.
 
 ### ChatGPT automation helpers
 
@@ -112,6 +123,7 @@ This toolkit raises the floor and the ceiling for Codex on Windows.
 
 - It gives Codex a stable set of command names and wrappers, so suggested commands are more likely to work immediately.
 - It front-loads practical tooling for inspection, refactoring, automation, scraping, document handling, and debugging.
+- It adds remote/network commands that can bootstrap SSH settings, check reachability, and locally import private Shadowsocks config without leaking secrets into source control.
 - It adds authenticated ChatGPT automation commands to the same PowerShell toolbelt, so browser-driven save, dump, ask, and cleanup workflows live beside the rest of the auth tooling.
 - It adds browser-extension management and extension-UI automation, so Codex can install helper extensions, load them into a predictable browser session, and drive their popups or settings pages from the shell.
 - It improves shell feedback with inventory, prediction, aliases, and prompt context, which shortens the loop between idea and execution.
@@ -144,6 +156,7 @@ The wizard:
 - audits the current machine
 - asks for a single confirmation
 - installs or repairs the toolkit and recommended extras
+- auto-imports local-only Shadowsocks secrets when a private source is available on that machine
 
 ### Standard install
 
@@ -188,6 +201,28 @@ Launch from one-click wrappers:
 - `Start-Audit-CodexWindowsToolkit.cmd`
 - `Start-Install-CodexWindowsToolkit.cmd`
 - `Start-CodexToolkitWizard.cmd`
+
+## Private network secrets
+
+The repo is designed so you can publish the installer without publishing your own server IPs, ports, or passwords.
+
+The installer and toolkit only auto-discover private Shadowsocks material from local machine state such as:
+
+- environment variables like `CODEX_SS_URI` or `CODEX_SS_SERVER` / `CODEX_SS_PORT` / `CODEX_SS_METHOD` / `CODEX_SS_PASSWORD`
+- local private files such as `Desktop\lia.private.txt` or `Desktop\lia.private.json`
+- local app state such as an existing Windows Shadowsocks client config
+
+Imported secrets are written only to the local toolkit state:
+
+- `Documents\PowerShell\Toolkit\config\private\shadowsocks.active.json`
+
+Useful commands:
+
+```powershell
+ss-secret-discover
+ss-secret-import -FetchWindowsClient -ExpandWindowsClient
+ss-secret-clear
+```
 
 ## Repository layout
 

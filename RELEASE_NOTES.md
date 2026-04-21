@@ -1,5 +1,21 @@
 # Release Notes
 
+## v1.2.0
+
+Installer refresh for the network toolkit and secret-safe Shadowsocks bootstrap flow.
+
+### Highlights
+
+- Added `codex.network-tools.ps1` to the installed helper profiles so SSH, proxy, and Shadowsocks commands are deployed with the main toolkit
+- Added local-only Shadowsocks secret discovery/import commands: `ss-secret-discover`, `ss-secret-import`, and `ss-secret-clear`
+- Added automatic private Shadowsocks bootstrap during install: the installer now looks for local env vars, private files, or existing client configs and imports them into local toolkit state without writing secrets into the repo
+- Added network and Shadowsocks guides to the installed docs set and expanded inventory/audit coverage for the new commands and local state
+- Added official Windows Shadowsocks client prefetch during private import so machines with a local private config can become usable faster
+
+### Why this release matters
+
+The toolkit can now carry a public installer while still becoming genuinely useful on a private machine. Real connection details stay local, but Codex still gets a predictable set of network commands and can bootstrap an actual usable client configuration automatically when the machine already has private state available.
+
 ## v1.1.0
 
 Installer refresh for the newer authenticated browser automation stack.

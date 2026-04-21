@@ -22,6 +22,10 @@ Write-Note ("Toolkit root: {0}" -f $context.ToolkitRoot)
 Write-Note ("Cloud-backed documents: {0}" -f $(if ($context.DocumentsRoot -match '\\OneDrive\\') { 'yes (OneDrive detected)' } else { 'no (local Documents detected)' }))
 Write-Note ("Heavy OCR rebuild needed: {0}" -f $(if (Test-ToolkitOcrHealthyQuick -Context $context) { 'no, current OCR stack looks healthy' } else { 'yes, OCR stack needs repair/build' }))
 Write-Note ("Web automation layer: ChatGPT control + browser-extension automation + shared helper script")
+Write-Note ("Remote/network layer: SSH baseline + proxy profile + Shadowsocks helpers + local-only private import")
+Write-Note ('Private secrets policy: installer only imports from local env vars, private files, or existing local client configs; it never writes your secrets into the public repo.')
+Write-Note ("Network guide path: {0}" -f $context.ToolkitNetworkGuidePath)
+Write-Note ("Shadowsocks guide path: {0}" -f $context.ToolkitShadowsocksGuidePath)
 Write-Note ("Web-auth guide path: {0}" -f $context.ToolkitWebAuthGuidePath)
 Write-Note ("Browser extension starter project path: {0}" -f $context.ToolkitBrowserExtensionStarterPath)
 
@@ -50,7 +54,7 @@ if ($missingOptional.Count -gt 0) {
 }
 
 Write-Host ''
-Write-Host 'The refreshed installer now also deploys ChatGPT automation helpers, browser-extension automation helpers, a web-auth guide, and a starter browser-extension project.' -ForegroundColor DarkGray
+Write-Host 'The refreshed installer now also deploys remote/network helpers, local-only Shadowsocks secret import, ChatGPT automation helpers, browser-extension automation helpers, a web-auth guide, and a starter browser-extension project.' -ForegroundColor DarkGray
 
 $includeOptionalPackages = -not $CoreOnly
 

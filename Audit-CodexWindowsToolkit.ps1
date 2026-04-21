@@ -99,7 +99,8 @@ function Get-Audit {
         $helperProfiles = @(
             (Join-Path $context.PowerShellRoot 'codex.document-tools.ps1'),
             (Join-Path $context.PowerShellRoot 'codex.ocr-translate-tools.ps1'),
-            (Join-Path $context.PowerShellRoot 'codex.web-auth-tools.ps1')
+            (Join-Path $context.PowerShellRoot 'codex.web-auth-tools.ps1'),
+            (Join-Path $context.PowerShellRoot 'codex.network-tools.ps1')
         )
         $missingHelperProfiles = @($helperProfiles | Where-Object { -not (Test-Path -LiteralPath $_) })
         [void]$audit.Add([pscustomobject]@{
@@ -165,10 +166,31 @@ function Get-Audit {
     })
 
     [void]$audit.Add([pscustomobject]@{
+        Component = 'Network toolkit guide'
+        Category = 'Toolkit'
+        Status = if (Test-Path -LiteralPath $context.ToolkitNetworkGuidePath) { 'Installed' } else { 'Missing' }
+        Detail = $context.ToolkitNetworkGuidePath
+    })
+
+    [void]$audit.Add([pscustomobject]@{
+        Component = 'Shadowsocks toolkit guide'
+        Category = 'Toolkit'
+        Status = if (Test-Path -LiteralPath $context.ToolkitShadowsocksGuidePath) { 'Installed' } else { 'Missing' }
+        Detail = $context.ToolkitShadowsocksGuidePath
+    })
+
+    [void]$audit.Add([pscustomobject]@{
         Component = 'Browser extension starter project'
         Category = 'Toolkit'
         Status = if (Test-Path -LiteralPath $context.ToolkitBrowserExtensionStarterPath) { 'Installed' } else { 'Missing' }
         Detail = $context.ToolkitBrowserExtensionStarterPath
+    })
+
+    [void]$audit.Add([pscustomobject]@{
+        Component = 'Local Shadowsocks active secret'
+        Category = 'Network'
+        Status = if (Test-Path -LiteralPath $context.ToolkitShadowsocksActiveSecretPath) { 'Configured' } else { 'NotConfigured' }
+        Detail = $context.ToolkitShadowsocksActiveSecretPath
     })
 
     foreach ($module in $script:Manifest.PythonModules) {
