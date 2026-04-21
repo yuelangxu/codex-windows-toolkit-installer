@@ -80,12 +80,14 @@ This installer packages those rough edges into a source-visible, repairable Powe
 
 - `proxy-profile-set`, `proxy-profile-show`, `proxy-profile-clear`
 - `remote-client-init`, `remote-server-bundle`, `remote-health`
+- `vps-provider-show`, `vps-plan-suggest`, `vps-bundle-new`
 - `ss-source-show`, `ss-secret-discover`, `ss-secret-import`, `ss-secret-clear`
 - `ss-profile-new`, `ss-client-fetch`, `ss-client-open`, `ss-client-info`, `ss-client-sync`, `ss-server-bundle`
 
 This layer gives Codex a safer SSH baseline, a managed proxy profile, official Shadowsocks source discovery, and a local-only import path for private client/server details.
 The public repo stays secret-free: the installer only looks for private Shadowsocks material in local environment variables, local private files such as `Desktop\lia.private.txt`, or existing local client configs, then writes the active secret only into the local toolkit state under `Documents\PowerShell\Toolkit\config\private`.
 It also lets PowerShell take over the official `shadowsocks-windows` client by inspecting the local machine, locating the portable `gui-config.json`, and writing discovered private server details plus local client settings into the official app config without hand-editing the GUI.
+For new infrastructure, it can also suggest VPS sizing and generate Ubuntu bootstrap bundles so the step after "buy a VPS" is much less manual.
 
 ### ChatGPT automation helpers
 
@@ -220,6 +222,9 @@ Imported secrets are written only to the local toolkit state:
 Useful commands:
 
 ```powershell
+vps-provider-show
+vps-plan-suggest -UseCase browser -ConcurrentBrowsers 2
+vps-bundle-new -Name browser-node -UseCase browser -HostAlias browserbox
 ss-secret-discover
 ss-secret-import -FetchWindowsClient -ExpandWindowsClient
 ss-client-info

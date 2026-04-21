@@ -53,6 +53,13 @@ function Get-CodexRemoteAccessExampleRoot {
     return (Join-Path (Join-Path (Get-CodexNetworkToolkitRoot) 'examples') 'remote-access-server')
 }
 
+function Get-CodexVpsExampleRoot {
+    [CmdletBinding()]
+    param()
+
+    return (Join-Path (Join-Path (Get-CodexNetworkToolkitRoot) 'examples') 'vps-bootstrap')
+}
+
 function Get-CodexShadowsocksSourceFilePath {
     [CmdletBinding()]
     param()
@@ -1394,6 +1401,223 @@ function Get-CodexRemoteServerReadmeContent {
     return ([string]::Join("`n", $lines) + "`n")
 }
 
+function Get-CodexVpsProviderCatalog {
+    [CmdletBinding()]
+    param()
+
+    return @(
+        [pscustomobject]@{
+            Provider    = 'DigitalOcean'
+            BestFor     = 'clean UI, fast onboarding, simple droplet workflow'
+            PricingUrl  = 'https://www.digitalocean.com/pricing/droplets'
+            BuyUrl      = 'https://cloud.digitalocean.com/droplets/new'
+            EntryHint   = 'Basic plans start at about $4-$6/mo as of 2026-04-21'
+            Notes       = 'Good default if you want the least friction when buying your first Linux VPS.'
+        }
+        [pscustomobject]@{
+            Provider    = 'Vultr'
+            BestFor     = 'low-cost entry plans and many regions'
+            PricingUrl  = 'https://www.vultr.com/pricing/'
+            BuyUrl      = 'https://my.vultr.com/deploy/'
+            EntryHint   = 'Regular cloud plans start around $3.50-$5/mo as of 2026-04-21'
+            Notes       = 'Often a strong budget pick for simple proxy or low-load automation nodes.'
+        }
+        [pscustomobject]@{
+            Provider    = 'Akamai / Linode'
+            BestFor     = 'straightforward shared instances and predictable sizing'
+            PricingUrl  = 'https://www.linode.com/pricing/'
+            BuyUrl      = 'https://cloud.linode.com/linodes/create'
+            EntryHint   = 'Entry shared plans show roughly $2-$5/mo tiers depending on line and region as of 2026-04-21'
+            Notes       = 'Comfortable middle ground if you like Linode-style docs and workflow.'
+        }
+        [pscustomobject]@{
+            Provider    = 'Hetzner Cloud'
+            BestFor     = 'strong price/performance, especially in Europe'
+            PricingUrl  = 'https://www.hetzner.com/cloud'
+            BuyUrl      = 'https://console.hetzner.com/projects'
+            EntryHint   = 'Small shared cloud plans are still among the cheaper options; exact pricing depends on line and region'
+            Notes       = 'Very attractive for EU-hosted Linux VPS if account availability works for you.'
+        }
+    )
+}
+
+function Get-CodexVpsBootstrapScriptContent {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('proxy', 'browser', 'mixed')]
+        [string]$UseCase,
+
+        [switch]$InstallDocker,
+        [switch]$InstallNode,
+        [switch]$InstallPython
+    )
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    [void]$lines.Add('#!/usr/bin/env bash')
+    [void]$lines.Add('set -euo pipefail')
+    [void]$lines.Add('')
+    [void]$lines.Add('export DEBIAN_FRONTEND=noninteractive')
+    [void]$lines.Add('sudo apt-get update')
+    [void]$lines.Add('sudo apt-get install -y curl git jq unzip ca-certificates ufw fail2ban htop tmux ripgrep')
+    [void]$lines.Add('')
+    [void]$lines.Add('sudo ufw allow OpenSSH')
+    [void]$lines.Add('sudo ufw --force enable')
+    [void]$lines.Add('sudo systemctl enable --now fail2ban')
+
+    if ($InstallPython -or $UseCase -eq 'browser' -or $UseCase -eq 'mixed') {
+        [void]$lines.Add('')
+        [void]$lines.Add('sudo apt-get install -y python3 python3-pip python3-venv')
+    }
+
+    if ($InstallNode -or $UseCase -eq 'browser' -or $UseCase -eq 'mixed') {
+        [void]$lines.Add('')
+        [void]$lines.Add('sudo apt-get install -y nodejs npm')
+    }
+
+    if ($UseCase -eq 'browser' -or $UseCase -eq 'mixed') {
+        [void]$lines.Add('')
+        [void]$lines.Add('# Packages that make headless Chromium / Playwright much happier on a fresh Ubuntu VPS')
+        [void]$lines.Add('sudo apt-get install -y xvfb fonts-liberation libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libdbus-1-3 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 libpango-1.0-0 libcairo2 libgtk-3-0')
+        [void]$lines.Add('mkdir -p "$HOME/browser-work"')
+    }
+
+    if ($InstallDocker -or $UseCase -eq 'mixed') {
+        [void]$lines.Add('')
+        [void]$lines.Add('sudo apt-get install -y docker.io docker-compose-v2')
+        [void]$lines.Add('sudo systemctl enable --now docker')
+        [void]$lines.Add('sudo usermod -aG docker "$USER" || true')
+    }
+
+    [void]$lines.Add('')
+    [void]$lines.Add('echo "Bootstrap complete. Re-login once if you need new group membership (for example docker)."')
+    return ([string]::Join("`n", $lines.ToArray()) + "`n")
+}
+
+function Get-CodexVpsCloudInitContent {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$User,
+
+        [int]$SshPort = 22,
+
+        [switch]$InstallDocker,
+        [switch]$InstallNode,
+        [switch]$InstallPython,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('proxy', 'browser', 'mixed')]
+        [string]$UseCase
+    )
+
+    $packages = @('curl', 'git', 'jq', 'unzip', 'ca-certificates', 'ufw', 'fail2ban', 'htop', 'tmux', 'ripgrep')
+    if ($InstallPython -or $UseCase -eq 'browser' -or $UseCase -eq 'mixed') {
+        $packages += @('python3', 'python3-pip', 'python3-venv')
+    }
+
+    if ($InstallNode -or $UseCase -eq 'browser' -or $UseCase -eq 'mixed') {
+        $packages += @('nodejs', 'npm')
+    }
+
+    if ($UseCase -eq 'browser' -or $UseCase -eq 'mixed') {
+        $packages += @('xvfb', 'fonts-liberation', 'libnss3', 'libnspr4', 'libatk1.0-0', 'libatk-bridge2.0-0', 'libcups2', 'libdrm2', 'libdbus-1-3', 'libxkbcommon0', 'libxcomposite1', 'libxdamage1', 'libxfixes3', 'libxrandr2', 'libgbm1', 'libasound2', 'libpango-1.0-0', 'libcairo2', 'libgtk-3-0')
+    }
+
+    if ($InstallDocker -or $UseCase -eq 'mixed') {
+        $packages += @('docker.io', 'docker-compose-v2')
+    }
+
+    $packageLines = $packages | Select-Object -Unique | ForEach-Object { "  - $_" }
+
+    $runcmd = New-Object System.Collections.Generic.List[string]
+    [void]$runcmd.Add("  - sed -i 's/^#\\?Port .*/Port $SshPort/' /etc/ssh/sshd_config")
+    [void]$runcmd.Add("  - systemctl restart ssh || systemctl restart sshd")
+    [void]$runcmd.Add('  - ufw allow OpenSSH')
+    [void]$runcmd.Add('  - ufw --force enable')
+    [void]$runcmd.Add('  - systemctl enable --now fail2ban')
+    if ($InstallDocker -or $UseCase -eq 'mixed') {
+        [void]$runcmd.Add("  - usermod -aG docker $User")
+        [void]$runcmd.Add('  - systemctl enable --now docker')
+    }
+
+    $lines = @(
+        '#cloud-config',
+        ('users:'),
+        ('  - name: {0}' -f $User),
+        ('    groups: sudo'),
+        ('    shell: /bin/bash'),
+        ('    sudo: ALL=(ALL) NOPASSWD:ALL'),
+        ('    lock_passwd: true'),
+        ('    ssh_authorized_keys:'),
+        ('      - ssh-ed25519 REPLACE_WITH_YOUR_PUBLIC_KEY codex-client'),
+        'package_update: true',
+        'package_upgrade: true',
+        'packages:'
+    ) + $packageLines + @(
+        'runcmd:'
+    ) + $runcmd.ToArray()
+
+    return ([string]::Join("`n", $lines) + "`n")
+}
+
+function Get-CodexVpsBundleReadmeContent {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('proxy', 'browser', 'mixed')]
+        [string]$UseCase,
+
+        [Parameter(Mandatory = $true)]
+        [string]$HostAlias,
+
+        [Parameter(Mandatory = $true)]
+        [string]$User,
+
+        [int]$SshPort = 22
+    )
+
+    $lines = @(
+        '# Codex VPS Bootstrap Bundle',
+        '',
+        ('Name: `{0}`' -f $Name),
+        ('Use case: `{0}`' -f $UseCase),
+        '',
+        '## Buy checklist',
+        '',
+        '1. Choose a Linux VPS, ideally Ubuntu 24.04 LTS.',
+        '2. Pick a plan that matches the suggested CPU/RAM from `vps-plan-suggest`.',
+        '3. Add your SSH public key during server creation if the provider supports it.',
+        '4. If the provider offers a firewall, open only SSH first.',
+        '5. Paste `cloud-init.yaml` as user data if the provider supports cloud-init.',
+        '',
+        '## After the VPS is live',
+        '',
+        ('1. Update your local SSH config: `remote-client-init -HostAlias {0} -HostName <PUBLIC_IP> -User {1} -Port {2}`' -f $HostAlias, $User, $SshPort),
+        ('2. Connect: `ssh {0}`' -f $HostAlias),
+        '3. Copy and run `bootstrap-ubuntu.sh` if cloud-init did not already cover everything.',
+        '4. Deploy workload-specific tools such as Docker, browser automation, or Shadowsocks.',
+        '',
+        '## Included files',
+        '',
+        '- `cloud-init.yaml`',
+        '- `bootstrap-ubuntu.sh`',
+        '- `README.md`',
+        '',
+        '## Official provider pages worth opening',
+        '',
+        '- DigitalOcean: https://www.digitalocean.com/pricing/droplets',
+        '- Vultr: https://www.vultr.com/pricing/',
+        '- Linode: https://www.linode.com/pricing/',
+        '- Hetzner Cloud: https://www.hetzner.com/cloud'
+    )
+
+    return ([string]::Join("`n", $lines) + "`n")
+}
+
 function proxy-profile-set {
     [CmdletBinding()]
     param(
@@ -1620,6 +1844,122 @@ function remote-health {
         TlsIssuer    = $tlsIssuer
         TlsValidTo   = $tlsValidTo
         TlsError     = $tlsError
+    }
+}
+
+function vps-provider-show {
+    [CmdletBinding()]
+    param()
+
+    Get-CodexVpsProviderCatalog
+}
+
+function vps-plan-suggest {
+    [CmdletBinding()]
+    param(
+        [ValidateSet('proxy', 'browser', 'mixed')]
+        [string]$UseCase = 'browser',
+
+        [int]$ConcurrentBrowsers = 1,
+
+        [switch]$NeedWindows
+    )
+
+    $recommendedCpu = 1
+    $recommendedMemoryGb = 1
+    $recommendedDiskGb = 20
+    $recommendedOs = 'Ubuntu 24.04 LTS'
+    $notes = New-Object System.Collections.Generic.List[string]
+
+    switch ($UseCase) {
+        'proxy' {
+            $recommendedCpu = 1
+            $recommendedMemoryGb = 1
+            $recommendedDiskGb = 20
+            [void]$notes.Add('Simple proxy or Shadowsocks workloads are light; network quality matters more than raw CPU.')
+        }
+        'browser' {
+            $recommendedCpu = [Math]::Max(2, [Math]::Min(4, $ConcurrentBrowsers * 2))
+            $recommendedMemoryGb = if ($ConcurrentBrowsers -ge 3) { 8 } else { 4 }
+            $recommendedDiskGb = 40
+            [void]$notes.Add('Headless browser automation needs more RAM than a plain proxy node.')
+            [void]$notes.Add('For one or two concurrent browser sessions, 2 vCPU / 4 GB RAM is a practical minimum.')
+        }
+        'mixed' {
+            $recommendedCpu = if ($ConcurrentBrowsers -ge 3) { 4 } else { 2 }
+            $recommendedMemoryGb = if ($ConcurrentBrowsers -ge 3) { 8 } else { 4 }
+            $recommendedDiskGb = 50
+            [void]$notes.Add('Mixed workloads usually mean browser automation plus API, scraping, or Docker tooling on the same server.')
+        }
+    }
+
+    if ($NeedWindows) {
+        $recommendedMemoryGb += 2
+        $recommendedDiskGb += 20
+        $recommendedOs = 'Windows Server only if you truly need Windows-specific GUI tooling'
+        [void]$notes.Add('Windows VPS costs more and has more overhead; prefer Linux unless a Windows-only app forces the choice.')
+    } else {
+        [void]$notes.Add('Linux is strongly preferred for Codex automation, Playwright, SSH, and server hardening.')
+    }
+
+    [pscustomobject]@{
+        UseCase             = $UseCase
+        ConcurrentBrowsers  = $ConcurrentBrowsers
+        NeedWindows         = $NeedWindows.IsPresent
+        RecommendedCpu      = $recommendedCpu
+        RecommendedMemoryGb = $recommendedMemoryGb
+        RecommendedDiskGb   = $recommendedDiskGb
+        RecommendedOs       = $recommendedOs
+        Providers           = @((Get-CodexVpsProviderCatalog | Select-Object Provider, BuyUrl, EntryHint))
+        Notes               = $notes.ToArray()
+    }
+}
+
+function vps-bundle-new {
+    [CmdletBinding()]
+    param(
+        [string]$Name = 'codex-vps',
+        [string]$OutputDir,
+
+        [ValidateSet('proxy', 'browser', 'mixed')]
+        [string]$UseCase = 'browser',
+
+        [string]$HostAlias = 'codex-vps',
+        [string]$User = 'codex',
+        [int]$SshPort = 22,
+
+        [switch]$InstallDocker,
+        [switch]$InstallNode,
+        [switch]$InstallPython
+    )
+
+    if ([string]::IsNullOrWhiteSpace($OutputDir)) {
+        $safeName = ($Name -replace '[^\w\.-]+', '-').Trim('-')
+        if ([string]::IsNullOrWhiteSpace($safeName)) {
+            $safeName = 'codex-vps'
+        }
+
+        $OutputDir = Join-Path (Get-CodexVpsExampleRoot) $safeName
+    }
+
+    $resolvedOutputDir = Ensure-CodexNetworkDirectory -Path $OutputDir
+    $cloudInitPath = Join-Path $resolvedOutputDir 'cloud-init.yaml'
+    $bootstrapPath = Join-Path $resolvedOutputDir 'bootstrap-ubuntu.sh'
+    $readmePath = Join-Path $resolvedOutputDir 'README.md'
+
+    Set-Content -LiteralPath $cloudInitPath -Value (Get-CodexVpsCloudInitContent -User $User -SshPort $SshPort -InstallDocker:$InstallDocker -InstallNode:$InstallNode -InstallPython:$InstallPython -UseCase $UseCase) -Encoding utf8
+    Set-Content -LiteralPath $bootstrapPath -Value (Get-CodexVpsBootstrapScriptContent -UseCase $UseCase -InstallDocker:$InstallDocker -InstallNode:$InstallNode -InstallPython:$InstallPython) -Encoding utf8
+    Set-Content -LiteralPath $readmePath -Value (Get-CodexVpsBundleReadmeContent -Name $Name -UseCase $UseCase -HostAlias $HostAlias -User $User -SshPort $SshPort) -Encoding utf8
+
+    [pscustomobject]@{
+        Name          = $Name
+        UseCase       = $UseCase
+        OutputDir     = $resolvedOutputDir
+        CloudInit     = $cloudInitPath
+        Bootstrap     = $bootstrapPath
+        Readme        = $readmePath
+        BuyPages      = @((Get-CodexVpsProviderCatalog | Select-Object Provider, BuyUrl))
+        ClientCommand = ("remote-client-init -HostAlias {0} -HostName <PUBLIC_IP> -User {1} -Port {2}" -f $HostAlias, $User, $SshPort)
     }
 }
 

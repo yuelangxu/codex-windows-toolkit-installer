@@ -7,6 +7,7 @@ This guide covers the remote-access network helpers that the Codex Windows Toolk
 - `codex.network-tools.ps1` in the PowerShell profile root
 - proxy profile commands: `proxy-profile-set`, `proxy-profile-show`, `proxy-profile-clear`
 - remote access helpers: `remote-client-init`, `remote-server-bundle`, `remote-health`
+- VPS helpers: `vps-provider-show`, `vps-plan-suggest`, `vps-bundle-new`
 - Shadowsocks helpers: `ss-source-show`, `ss-secret-discover`, `ss-secret-import`, `ss-secret-clear`, `ss-profile-new`, `ss-client-fetch`, `ss-client-open`, `ss-server-bundle`
 
 ## Managed state roots
@@ -59,6 +60,22 @@ What it does:
 - supports env vars, private text or JSON files, and existing local client configs
 - writes the imported active secret only into `Toolkit\config\private\shadowsocks.active.json`
 - keeps public source control clean while still letting the installed toolkit become genuinely usable on a private machine
+
+## VPS planning
+
+Run:
+
+```powershell
+vps-provider-show
+vps-plan-suggest -UseCase browser -ConcurrentBrowsers 2
+vps-bundle-new -Name browser-node -UseCase browser -HostAlias browserbox
+```
+
+What it does:
+
+- shows official provider pricing and buy pages that are good starting points
+- suggests practical CPU, RAM, and disk sizing for proxy, browser, or mixed workloads
+- generates a ready-to-edit Ubuntu cloud-init file plus a bootstrap shell script for the VPS you buy
 
 ## Server-side bundle
 

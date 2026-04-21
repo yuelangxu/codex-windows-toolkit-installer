@@ -1,5 +1,20 @@
 # Release Notes
 
+## v1.4.0
+
+VPS buying guidance and bootstrap bundle generation.
+
+### Highlights
+
+- Added `vps-provider-show` to surface official VPS pricing and buy pages for common starter providers
+- Added `vps-plan-suggest` so the toolkit can recommend practical CPU, RAM, and disk sizing for proxy, browser, or mixed workloads
+- Added `vps-bundle-new` to generate Ubuntu cloud-init plus bootstrap scripts for the VPS you buy next
+- Updated the network docs, README, inventory, and shell hints so VPS lifecycle tasks sit next to SSH and Shadowsocks commands
+
+### Why this release matters
+
+The toolkit now covers the step before server deployment too. Instead of only managing a machine after it exists, it can help choose a sane VPS starting point and generate the files you will want immediately after checkout.
+
 ## v1.3.0
 
 Official Shadowsocks Windows client handoff from PowerShell.
