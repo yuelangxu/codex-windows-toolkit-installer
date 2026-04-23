@@ -1,4 +1,5 @@
 *.bak
+logs/
 Thumbs.db
 .DS_Store
 __pycache__/

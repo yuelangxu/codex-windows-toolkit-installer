@@ -9,7 +9,8 @@ param(
     [switch]$IncludeOptionalPackages,
     [switch]$IncludeProfileIntegration,
     [switch]$DisableProfileIntegration,
-    [switch]$ForceOcrRepair
+    [switch]$ForceOcrRepair,
+    [switch]$KeepOllamaStartupShortcut
 )
 
 . (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'common.ps1')
@@ -29,6 +30,7 @@ Write-Note ("PowerShell profile integration: {0}" -f $(if ($useProfileIntegratio
 Write-Note ("Recommended extra CLI tools: {0}" -f $(if ($IncludeOptionalPackages) { 'enabled' } else { 'disabled' }))
 Write-Note ("ChatGPT/browser-extension automation: {0}" -f $(if ($useProfileIntegration) { 'will be deployed with proactive web-auth dependency setup' } else { 'available in source, but profile integration is disabled' }))
 Write-Note ("Remote/network toolkit: {0}" -f $(if ($useProfileIntegration) { 'will be deployed with SSH, proxy, and Shadowsocks helpers' } else { 'available in source, but profile integration is disabled' }))
+Write-Note ("Ollama startup policy: {0}" -f $(if ($KeepOllamaStartupShortcut) { 'leave any Windows Startup shortcut untouched' } else { 'demand-start only; disable Windows Startup shortcut if present' }))
 Write-Note ('Private Shadowsocks bootstrap: installer will only look in local env vars, private files, or existing client configs; no secrets are stored in this repo.')
 Write-Note ("Browser extension starter project: {0}" -f $context.ToolkitBrowserExtensionStarterPath)
 Write-Note ("Network guide: {0}" -f $context.ToolkitNetworkGuidePath)
@@ -63,6 +65,13 @@ if (-not $shouldProceed) {
 & $wingetScript -InstallScope $InstallScope -IncludeOptionalPackages:$IncludeOptionalPackages
 & $moduleScript
 & $profilesScript -ToolkitRoot $context.ToolkitRoot -IncludeProfileIntegration:$useProfileIntegration
+
+if ($KeepOllamaStartupShortcut) {
+    Write-Note 'Leaving any existing Ollama Windows Startup shortcut untouched.'
+} else {
+    $ollamaStartupResult = Disable-OllamaStartupShortcut -Context $context
+    Write-Note $ollamaStartupResult.Detail
+}
 
 $ocrArguments = @{
     ToolkitRoot = $context.ToolkitRoot

@@ -160,6 +160,9 @@ The wizard:
 - asks for a single confirmation
 - installs or repairs the toolkit and recommended extras
 - auto-imports local-only Shadowsocks secrets when a private source is available on that machine
+- keeps Ollama demand-start by default by disabling any Windows Startup shortcut it finds
+
+The installer checks local Ollama model manifests directly instead of calling `ollama list`, so audits and profile loading do not wake the Ollama app or background server.
 
 ### Standard install
 
@@ -197,6 +200,12 @@ Unattended install with `llava` model pull:
 
 ```powershell
 powershell -NoLogo -ExecutionPolicy Bypass -File .\Install-CodexWindowsToolkit.ps1 -AutoApprove -IncludeLlavaModel
+```
+
+Keep an existing Ollama Windows Startup shortcut if you intentionally want Ollama to launch at login:
+
+```powershell
+powershell -NoLogo -ExecutionPolicy Bypass -File .\Install-CodexWindowsToolkit.ps1 -KeepOllamaStartupShortcut
 ```
 
 Launch from one-click wrappers:

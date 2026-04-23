@@ -1,5 +1,21 @@
 # Release Notes
 
+## v1.4.1
+
+Installer reliability fixes from a real repair run.
+
+### Highlights
+
+- Fixed the OCR installer strict-mode failure when a pip step does not define `IndexUrl`
+- Added retrying, explicit PyPI-based pip installs for web-auth and OCR dependency setup
+- Changed Ollama model detection to read local manifests instead of running `ollama list`, so audits and profile initialization do not wake Ollama
+- Made the installer default to demand-start Ollama by moving any Windows Startup shortcut into the toolkit backups folder
+- Ignored local installer logs so repair transcripts are not accidentally committed
+
+### Why this release matters
+
+The guided wizard now carries the fixes that were needed during an actual partial-install recovery. A rerun should repair the machine directly instead of requiring manual `playwright` installs, OCR script edits, or Ollama startup cleanup.
+
 ## v1.4.0
 
 VPS buying guidance and bootstrap bundle generation.

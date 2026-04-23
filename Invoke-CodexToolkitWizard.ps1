@@ -4,7 +4,8 @@ param(
     [string]$InstallScope = 'Auto',
     [switch]$CoreOnly,
     [switch]$IncludeLlavaModel,
-    [switch]$AutoApprove
+    [switch]$AutoApprove,
+    [switch]$KeepOllamaStartupShortcut
 )
 
 . (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'common.ps1')
@@ -23,6 +24,7 @@ Write-Note ("Cloud-backed documents: {0}" -f $(if ($context.DocumentsRoot -match
 Write-Note ("Heavy OCR rebuild needed: {0}" -f $(if (Test-ToolkitOcrHealthyQuick -Context $context) { 'no, current OCR stack looks healthy' } else { 'yes, OCR stack needs repair/build' }))
 Write-Note ("Web automation layer: ChatGPT control + browser-extension automation + shared helper script")
 Write-Note ("Remote/network layer: SSH baseline + proxy profile + Shadowsocks helpers + local-only private import")
+Write-Note ("Ollama startup policy: {0}" -f $(if ($KeepOllamaStartupShortcut) { 'leave any Windows Startup shortcut untouched' } else { 'demand-start only; disable Windows Startup shortcut if present' }))
 Write-Note ('Private secrets policy: installer only imports from local env vars, private files, or existing local client configs; it never writes your secrets into the public repo.')
 Write-Note ("Network guide path: {0}" -f $context.ToolkitNetworkGuidePath)
 Write-Note ("Shadowsocks guide path: {0}" -f $context.ToolkitShadowsocksGuidePath)
@@ -91,7 +93,8 @@ if (-not $AutoApprove) {
     -AutoApprove `
     -IncludeProfileIntegration `
     -IncludeOptionalPackages:$includeOptionalPackages `
-    -IncludeLlavaModel:$IncludeLlavaModel
+    -IncludeLlavaModel:$IncludeLlavaModel `
+    -KeepOllamaStartupShortcut:$KeepOllamaStartupShortcut
 
 Write-Section 'Post-Install Tool Summary'
 & $inventoryScript -ToolkitRoot $context.ToolkitRoot -SummaryOnly

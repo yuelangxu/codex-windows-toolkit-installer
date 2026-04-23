@@ -100,10 +100,8 @@ function Install-WebAuthPythonDependencies {
 
     $packageList = [string]::Join(', ', $missingPackages.ToArray())
     Write-Host ("Installing web-auth Python dependencies via {0}: {1}" -f $pythonPath, $packageList) -ForegroundColor Yellow
-    & $pythonPath -m pip install --quiet --user --no-warn-script-location @($missingPackages.ToArray())
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to install web-auth Python dependencies: $packageList"
-    }
+    $pipArguments = @('install', '--user', '--no-warn-script-location') + @($missingPackages.ToArray())
+    Invoke-ToolkitPipInstall -PythonPath $pythonPath -Arguments $pipArguments -IndexUrl 'https://pypi.org/simple' -RetryCount 3 -RetryDelaySeconds 10
 }
 
 function Invoke-ShadowsocksPrivateBootstrap {

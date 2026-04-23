@@ -230,11 +230,12 @@ function Get-Audit {
     }
 
     foreach ($model in $script:Manifest.OllamaModels) {
+        $modelInstalled = Get-OllamaModelInstalled -Model $model
         [void]$audit.Add([pscustomobject]@{
             Component = "Ollama model: $model"
             Category = 'AI'
-            Status = if (Get-OllamaModelInstalled -Model $model) { 'Installed' } else { 'Missing' }
-            Detail = if (Test-CommandAvailable -Name 'ollama') { 'ollama list' } else { 'Ollama is not installed' }
+            Status = if ($modelInstalled) { 'Installed' } else { 'Missing' }
+            Detail = if ($modelInstalled) { 'local Ollama model manifest' } elseif (Test-CommandAvailable -Name 'ollama') { 'No local model manifest found; run ollama pull if needed' } else { 'Ollama is not installed' }
         })
     }
 

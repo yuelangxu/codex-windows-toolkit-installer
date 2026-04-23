@@ -18,21 +18,7 @@ function Invoke-VenvPip {
         [string]$IndexUrl
     )
 
-    $commandArguments = New-Object System.Collections.Generic.List[string]
-    [void]$commandArguments.Add('-m')
-    [void]$commandArguments.Add('pip')
-    foreach ($argument in $Arguments) {
-        [void]$commandArguments.Add($argument)
-    }
-    if (-not [string]::IsNullOrWhiteSpace($IndexUrl)) {
-        [void]$commandArguments.Add('--index-url')
-        [void]$commandArguments.Add($IndexUrl)
-    }
-
-    & $context.ToolkitVenvPython @commandArguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "pip failed for arguments: $([string]::Join(' ', $Arguments))"
-    }
+    Invoke-ToolkitPipInstall -PythonPath $context.ToolkitVenvPython -Arguments $Arguments -IndexUrl $IndexUrl -RetryCount 3 -RetryDelaySeconds 10
 }
 
 function Test-VenvImport {
@@ -293,8 +279,9 @@ foreach ($step in @(
     @{ Arguments = @('install', '--no-deps', 'nougat-ocr') }
 )) {
     $arguments = [string[]]$step.Arguments
+    $indexUrl = if ($step.ContainsKey('IndexUrl')) { $step['IndexUrl'] } else { $null }
     Write-Note ("pip {0}" -f ([string]::Join(' ', $arguments)))
-    Invoke-VenvPip -Arguments $arguments -IndexUrl $step.IndexUrl
+    Invoke-VenvPip -Arguments $arguments -IndexUrl $indexUrl
 }
 
 Patch-NougatCompatibility

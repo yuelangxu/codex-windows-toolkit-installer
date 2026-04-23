@@ -77,26 +77,39 @@ function Get-CodexOllamaInstalledModels {
     [CmdletBinding()]
     param()
 
-    $ollama = Get-CodexExecutablePath -Name @('ollama')
-    if ([string]::IsNullOrWhiteSpace($ollama)) {
-        return @()
+    $modelsRoot = if ([string]::IsNullOrWhiteSpace($env:OLLAMA_MODELS)) {
+        Join-Path (Join-Path $HOME '.ollama') 'models'
+    } else {
+        $env:OLLAMA_MODELS
     }
 
-    $output = & $ollama 'list' 2>$null
-    if ($LASTEXITCODE -ne 0 -or $null -eq $output) {
+    $manifestsRoot = Join-Path $modelsRoot 'manifests'
+    if (-not (Test-Path -LiteralPath $manifestsRoot)) {
         return @()
     }
 
     $models = New-Object System.Collections.Generic.List[string]
-    foreach ($line in $output) {
-        $text = [string]$line
-        if ([string]::IsNullOrWhiteSpace($text) -or $text -match '^\s*NAME\s+') {
-            continue
-        }
+    $seen = @{}
 
-        $name = ($text -split '\s+')[0]
-        if (-not [string]::IsNullOrWhiteSpace($name)) {
-            [void]$models.Add($name)
+    foreach ($registryDir in @(Get-ChildItem -LiteralPath $manifestsRoot -Directory -ErrorAction SilentlyContinue)) {
+        foreach ($namespaceDir in @(Get-ChildItem -LiteralPath $registryDir.FullName -Directory -ErrorAction SilentlyContinue)) {
+            foreach ($modelDir in @(Get-ChildItem -LiteralPath $namespaceDir.FullName -Directory -ErrorAction SilentlyContinue)) {
+                foreach ($tagFile in @(Get-ChildItem -LiteralPath $modelDir.FullName -File -ErrorAction SilentlyContinue)) {
+                    $modelName = if ($namespaceDir.Name -eq 'library') {
+                        '{0}:{1}' -f $modelDir.Name, $tagFile.Name
+                    } else {
+                        '{0}/{1}:{2}' -f $namespaceDir.Name, $modelDir.Name, $tagFile.Name
+                    }
+
+                    $key = $modelName.ToLowerInvariant()
+                    if ($seen.ContainsKey($key)) {
+                        continue
+                    }
+
+                    $seen[$key] = $true
+                    [void]$models.Add($modelName)
+                }
+            }
         }
     }
 
@@ -2544,5 +2557,3 @@ Set-Alias -Name doc-batch -Value Invoke-CodexDocumentBatch -Scope Global -Option
 Set-Alias -Name doc-config -Value Set-CodexDocumentPipelineConfig -Scope Global -Option AllScope -Force
 Set-Alias -Name ocr-models -Value Get-CodexDocumentCapabilities -Scope Global -Option AllScope -Force
 Set-Alias -Name doc-help -Value Show-CodexDocumentPipelineHelp -Scope Global -Option AllScope -Force
-
-Initialize-CodexDocumentPipelineConfig | Out-Null

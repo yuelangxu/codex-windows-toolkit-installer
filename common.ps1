@@ -303,6 +303,144 @@ function Find-ToolkitAutomationPython {
     return $null
 }
 
+function Invoke-ToolkitPipInstall {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PythonPath,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments,
+
+        [string]$IndexUrl = 'https://pypi.org/simple',
+
+        [int]$RetryCount = 3,
+
+        [int]$RetryDelaySeconds = 5
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PythonPath)) {
+        throw 'No Python interpreter was supplied for pip install.'
+    }
+
+    if ([string]::IsNullOrWhiteSpace($IndexUrl)) {
+        $IndexUrl = 'https://pypi.org/simple'
+    }
+
+    $commandArguments = New-Object System.Collections.Generic.List[string]
+    [void]$commandArguments.Add('-m')
+    [void]$commandArguments.Add('pip')
+    [void]$commandArguments.Add('--disable-pip-version-check')
+    foreach ($argument in $Arguments) {
+        [void]$commandArguments.Add($argument)
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($IndexUrl) -and $Arguments -notcontains '--index-url' -and $Arguments -notcontains '-i') {
+        [void]$commandArguments.Add('--index-url')
+        [void]$commandArguments.Add($IndexUrl)
+    }
+
+    if ($Arguments -notcontains '--retries') {
+        [void]$commandArguments.Add('--retries')
+        [void]$commandArguments.Add('8')
+    }
+
+    if ($Arguments -notcontains '--timeout') {
+        [void]$commandArguments.Add('--timeout')
+        [void]$commandArguments.Add('90')
+    }
+
+    for ($attempt = 1; $attempt -le $RetryCount; $attempt++) {
+        Write-Note ("pip attempt {0}/{1}: {2}" -f $attempt, $RetryCount, ([string]::Join(' ', $Arguments)))
+        & $PythonPath @commandArguments
+        if ($LASTEXITCODE -eq 0) {
+            return
+        }
+
+        $exitCode = $LASTEXITCODE
+        if ($attempt -lt $RetryCount) {
+            Write-Warning ("pip failed with exit code {0}; retrying in {1}s." -f $exitCode, $RetryDelaySeconds)
+            Start-Sleep -Seconds $RetryDelaySeconds
+        }
+    }
+
+    throw "pip failed for arguments after $RetryCount attempts: $([string]::Join(' ', $Arguments))"
+}
+
+function Get-OllamaManifestRoot {
+    $modelsRoot = if ([string]::IsNullOrWhiteSpace($env:OLLAMA_MODELS)) {
+        Join-Path (Join-Path $HOME '.ollama') 'models'
+    } else {
+        $env:OLLAMA_MODELS
+    }
+
+    return (Join-Path $modelsRoot 'manifests')
+}
+
+function Get-OllamaManifestModelNames {
+    $manifestsRoot = Get-OllamaManifestRoot
+    if (-not (Test-Path -LiteralPath $manifestsRoot)) {
+        return @()
+    }
+
+    $models = New-Object System.Collections.Generic.List[string]
+    $seen = @{}
+    foreach ($registryDir in @(Get-ChildItem -LiteralPath $manifestsRoot -Directory -ErrorAction SilentlyContinue)) {
+        foreach ($namespaceDir in @(Get-ChildItem -LiteralPath $registryDir.FullName -Directory -ErrorAction SilentlyContinue)) {
+            foreach ($modelDir in @(Get-ChildItem -LiteralPath $namespaceDir.FullName -Directory -ErrorAction SilentlyContinue)) {
+                foreach ($tagFile in @(Get-ChildItem -LiteralPath $modelDir.FullName -File -ErrorAction SilentlyContinue)) {
+                    $modelName = if ($namespaceDir.Name -eq 'library') {
+                        '{0}:{1}' -f $modelDir.Name, $tagFile.Name
+                    } else {
+                        '{0}/{1}:{2}' -f $namespaceDir.Name, $modelDir.Name, $tagFile.Name
+                    }
+
+                    $key = $modelName.ToLowerInvariant()
+                    if ($seen.ContainsKey($key)) {
+                        continue
+                    }
+
+                    $seen[$key] = $true
+                    [void]$models.Add($modelName)
+                }
+            }
+        }
+    }
+
+    return @($models.ToArray())
+}
+
+function Disable-OllamaStartupShortcut {
+    param(
+        [Parameter(Mandatory = $true)]
+        $Context
+    )
+
+    $startupRoot = [Environment]::GetFolderPath('Startup')
+    if ([string]::IsNullOrWhiteSpace($startupRoot)) {
+        $startupRoot = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Microsoft\Windows\Start Menu\Programs\Startup'
+    }
+
+    $shortcutPath = Join-Path $startupRoot 'Ollama.lnk'
+    if (-not (Test-Path -LiteralPath $shortcutPath)) {
+        return [pscustomobject]@{
+            Changed = $false
+            Detail = 'No Ollama Windows Startup shortcut was found.'
+        }
+    }
+
+    Ensure-Directory -Path $Context.ToolkitBackups
+    $destination = Join-Path $Context.ToolkitBackups 'Ollama.lnk.disabled'
+    if (Test-Path -LiteralPath $destination) {
+        $destination = Join-Path $Context.ToolkitBackups ("Ollama.{0}.lnk.disabled" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    }
+
+    Move-Item -LiteralPath $shortcutPath -Destination $destination -Force
+    return [pscustomobject]@{
+        Changed = $true
+        Detail = "Moved Ollama Windows Startup shortcut to $destination."
+    }
+}
+
 function Get-GlobalPythonImportState {
     param(
         [Parameter(Mandatory = $true)]
@@ -442,12 +580,19 @@ function Get-OllamaModelInstalled {
         [string]$Model
     )
 
-    if (-not (Test-CommandAvailable -Name 'ollama')) {
-        return $false
+    $expectedNames = if ($Model -match ':') { @($Model) } else { @($Model, ('{0}:latest' -f $Model)) }
+    $expectedKeys = @{}
+    foreach ($name in $expectedNames) {
+        $expectedKeys[$name.ToLowerInvariant()] = $true
     }
 
-    $listOutput = & ollama list 2>$null
-    return ($LASTEXITCODE -eq 0 -and $listOutput -match ("(^|\s){0}:latest(\s|$)" -f [regex]::Escape($Model)))
+    foreach ($modelName in @(Get-OllamaManifestModelNames)) {
+        if ($expectedKeys.ContainsKey($modelName.ToLowerInvariant())) {
+            return $true
+        }
+    }
+
+    return $false
 }
 
 function Ensure-Directory {
