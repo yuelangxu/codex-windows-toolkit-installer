@@ -154,6 +154,9 @@ foreach ($assetName in @('easyocr_read.py', 'paddleocr_read.py', 'donut_ocr.py',
 $webAuthGuideContent = Get-Content -LiteralPath (Join-Path $script:AssetsRoot 'Codex-Web-Auth-Toolkit.md') -Raw
 Write-ManagedFile -Path $context.ToolkitWebAuthGuidePath -Content $webAuthGuideContent
 
+$phoneGuideContent = Get-Content -LiteralPath (Join-Path $script:AssetsRoot 'Codex-Phone-Toolkit.md') -Raw
+Write-ManagedFile -Path $context.ToolkitPhoneGuidePath -Content $phoneGuideContent
+
 $networkGuideContent = Get-Content -LiteralPath (Join-Path $script:AssetsRoot 'Codex-Network-Toolkit.md') -Raw
 Write-ManagedFile -Path $context.ToolkitNetworkGuidePath -Content $networkGuideContent
 
@@ -161,6 +164,8 @@ $shadowsocksGuideContent = Get-Content -LiteralPath (Join-Path $script:AssetsRoo
 Write-ManagedFile -Path $context.ToolkitShadowsocksGuidePath -Content $shadowsocksGuideContent
 
 Copy-ManagedDirectory -SourcePath (Join-Path $script:AssetsRoot 'browser-extension-starter') -DestinationPath $context.ToolkitBrowserExtensionStarterPath
+Copy-ManagedDirectory -SourcePath (Join-Path $script:AssetsRoot 'android-apk-tools') -DestinationPath $context.ToolkitAndroidApkToolsPath
+Copy-ManagedDirectory -SourcePath (Join-Path $script:AssetsRoot 'termux-bootstrap') -DestinationPath $context.ToolkitTermuxBootstrapPath
 
 $starshipConfig = Get-Content -LiteralPath (Join-Path $script:AssetsRoot 'starship.toml') -Raw
 Write-ManagedFile -Path $context.StarshipConfigDestination -Content $starshipConfig
@@ -169,7 +174,7 @@ if ($IncludeProfileIntegration) {
     Ensure-Directory -Path $context.PowerShellRoot
     Ensure-Directory -Path $context.PowerShellScriptsRoot
 
-    foreach ($profileAsset in @('codex.document-tools.ps1', 'codex.ocr-translate-tools.ps1', 'codex.web-auth-tools.ps1', 'codex.network-tools.ps1')) {
+    foreach ($profileAsset in @('codex.phone-tools.ps1', 'codex.document-tools.ps1', 'codex.ocr-translate-tools.ps1', 'codex.web-auth-tools.ps1', 'codex.network-tools.ps1')) {
         $profileContent = Get-Content -LiteralPath (Join-Path $script:AssetsRoot $profileAsset) -Raw
         Write-ManagedFile -Path (Join-Path $context.PowerShellRoot $profileAsset) -Content $profileContent
     }
@@ -258,7 +263,7 @@ foreach ($entry in $wrapperMap.GetEnumerator()) {
 }
 
 if ($IncludeProfileIntegration) {
-    Write-Host 'Assets, wrapper commands, shared profile, network/web-auth guides, extension starter project, and shell prompt config have been deployed.' -ForegroundColor Green
+    Write-Host 'Assets, wrapper commands, shared profile, phone toolkit, network/web-auth guides, extension starter project, and shell prompt config have been deployed.' -ForegroundColor Green
 } else {
-    Write-Host 'Assets, wrapper commands, network/web-auth guides, extension starter project, and shell prompt config have been deployed. Shared profile integration was skipped.' -ForegroundColor Green
+    Write-Host 'Assets, wrapper commands, phone toolkit, network/web-auth guides, extension starter project, and shell prompt config have been deployed. Shared profile integration was skipped.' -ForegroundColor Green
 }

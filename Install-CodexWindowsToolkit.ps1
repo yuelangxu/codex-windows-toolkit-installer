@@ -29,10 +29,12 @@ Write-Note ("Install scope preference: {0}" -f $InstallScope)
 Write-Note ("PowerShell profile integration: {0}" -f $(if ($useProfileIntegration) { 'enabled (default)' } else { 'disabled' }))
 Write-Note ("Recommended extra CLI tools: {0}" -f $(if ($IncludeOptionalPackages) { 'enabled' } else { 'disabled' }))
 Write-Note ("ChatGPT/browser-extension automation: {0}" -f $(if ($useProfileIntegration) { 'will be deployed with proactive web-auth dependency setup' } else { 'available in source, but profile integration is disabled' }))
+Write-Note ("Android / phone debugging toolkit: {0}" -f $(if ($useProfileIntegration) { 'ADB helpers, diagnostics, UI dump, Shizuku, APK staging, and scrcpy support' } else { 'available in source, but profile integration is disabled' }))
 Write-Note ("Remote/network toolkit: {0}" -f $(if ($useProfileIntegration) { 'will be deployed with SSH, proxy, and Shadowsocks helpers' } else { 'available in source, but profile integration is disabled' }))
 Write-Note ("Ollama startup policy: {0}" -f $(if ($KeepOllamaStartupShortcut) { 'leave any Windows Startup shortcut untouched' } else { 'demand-start only; disable Windows Startup shortcut if present' }))
 Write-Note ('Private Shadowsocks bootstrap: installer will only look in local env vars, private files, or existing client configs; no secrets are stored in this repo.')
 Write-Note ("Browser extension starter project: {0}" -f $context.ToolkitBrowserExtensionStarterPath)
+Write-Note ("Phone toolkit guide: {0}" -f $context.ToolkitPhoneGuidePath)
 Write-Note ("Network guide: {0}" -f $context.ToolkitNetworkGuidePath)
 Write-Note ("Shadowsocks guide: {0}" -f $context.ToolkitShadowsocksGuidePath)
 Write-Note ("Web-auth guide: {0}" -f $context.ToolkitWebAuthGuidePath)
@@ -93,6 +95,7 @@ Write-Section 'Final audit'
 
 Write-Host ''
 Write-Host 'Codex Windows Toolkit installation completed.' -ForegroundColor Green
+Write-Host ("Phone toolkit guide: {0}" -f $context.ToolkitPhoneGuidePath) -ForegroundColor DarkGray
 Write-Host ("Network guide: {0}" -f $context.ToolkitNetworkGuidePath) -ForegroundColor DarkGray
 Write-Host ("Shadowsocks guide: {0}" -f $context.ToolkitShadowsocksGuidePath) -ForegroundColor DarkGray
 Write-Host ("Local-only Shadowsocks active secret path: {0}" -f $context.ToolkitShadowsocksActiveSecretPath) -ForegroundColor DarkGray

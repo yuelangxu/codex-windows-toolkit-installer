@@ -38,6 +38,7 @@ This installer packages those rough edges into a source-visible, repairable Powe
 
 - `pwsh`
 - `git`, `gh`
+- `adb`
 - `rg`, `fd`, `fzf`
 - `jq`, `yq`
 - `uv`, `pnpm`
@@ -45,7 +46,7 @@ This installer packages those rough edges into a source-visible, repairable Powe
 - `eza`, `zoxide`
 - `lazygit`, `just`, `hyperfine`
 - `7z`, `sd`
-- optional extras through the wizard: `xh`, `mise`, `dust`, `procs`
+- optional extras through the wizard: `xh`, `mise`, `dust`, `procs`, `scrcpy`
 
 ### PowerShell experience upgrades
 
@@ -71,10 +72,24 @@ This installer packages those rough edges into a source-visible, repairable Powe
 
 ### Source-carried helper scripts
 
+- `codex.phone-tools.ps1`
 - `codex.document-tools.ps1`
 - `codex.ocr-translate-tools.ps1`
 - `codex.web-auth-tools.ps1`
 - `codex.network-tools.ps1`
+
+### Phone and Android workflow
+
+- `phone-status`, `phone-diag`, `phone-noise-audit`
+- `phone-storage-scan`, `phone-ui-dump`
+- `phone-pull`, `phone-archive`
+- `phone-mirror`, `phone-shizuku-start`
+- `phone-apk-list`, `phone-apk-import`, `phone-apk-install`
+
+This layer turns the toolkit into a more reusable Android debugging workstation.
+It standardizes ADB-first diagnostics, storage summaries, screenshot plus UI hierarchy capture, safe file pulls, opt-in remote archive/delete flows, Shizuku startup, scrcpy launch, and local APK staging under the PowerShell toolkit root.
+The public repo does not carry third-party APK binaries; instead, the toolkit imports locally available APK helpers into `Toolkit\examples\android-apk-tools` and keeps the machine-specific files out of source control.
+It also ships a Termux bootstrap example under `Toolkit\examples\termux-bootstrap` so phone-side shell setup can be carried forward in a source-visible way too.
 
 ### Remote and network workflow
 
@@ -126,6 +141,7 @@ This toolkit raises the floor and the ceiling for Codex on Windows.
 
 - It gives Codex a stable set of command names and wrappers, so suggested commands are more likely to work immediately.
 - It front-loads practical tooling for inspection, refactoring, automation, scraping, document handling, and debugging.
+- It adds phone-debugging commands for Android diagnostics, ADB capture, storage review, Shizuku startup, and local APK staging, so cross-device workflows can be driven from the same shell.
 - It adds remote/network commands that can bootstrap SSH settings, check reachability, and locally import private Shadowsocks config without leaking secrets into source control.
 - It adds authenticated ChatGPT automation commands to the same PowerShell toolbelt, so browser-driven save, dump, ask, and cleanup workflows live beside the rest of the auth tooling.
 - It adds browser-extension management and extension-UI automation, so Codex can install helper extensions, load them into a predictable browser session, and drive their popups or settings pages from the shell.
@@ -250,7 +266,7 @@ ss-secret-clear
 - `Install-CodexOcrEnvironment.ps1`: isolated OCR stack setup
 - `Install-CodexProfilesAndWrappers.ps1`: profile deployment and wrapper installation
 - `toolkit.manifest.psd1`: package and tool manifest
-- `assets/`: shared profiles, wrappers, Python helpers, OCR helpers, and prompt assets
+- `assets/`: shared profiles, wrappers, Python helpers, OCR helpers, phone/Android helpers, and prompt assets
 
 ## Notes
 

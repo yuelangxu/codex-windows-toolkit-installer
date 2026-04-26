@@ -40,6 +40,12 @@
             Category = 'Core'
         }
         @{
+            Id = 'Google.PlatformTools'
+            DisplayName = 'Android SDK Platform-Tools'
+            Commands = @('adb')
+            Category = 'Mobile'
+        }
+        @{
             Id = 'QPDF.QPDF'
             DisplayName = 'QPDF'
             Commands = @('qpdf')
@@ -237,6 +243,12 @@
             Id = 'dalance.procs'
             DisplayName = 'procs'
             Commands = @('procs')
+            Category = 'Optional'
+        }
+        @{
+            Id = 'Genymobile.scrcpy'
+            DisplayName = 'scrcpy'
+            Commands = @('scrcpy')
             Category = 'Optional'
         }
     )

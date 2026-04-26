@@ -40,11 +40,14 @@ function Get-ToolkitContext {
         PowerShellScriptsRoot = (Join-Path $powerShellRoot 'Scripts')
         SharedProfileDestination = (Join-Path $powerShellRoot 'profile.shared.ps1')
         ToolkitGuidePath = (Join-Path (Join-Path $ToolkitRoot 'docs') 'Codex-OCR-Toolkit.md')
+        ToolkitPhoneGuidePath = (Join-Path (Join-Path $ToolkitRoot 'docs') 'Codex-Phone-Toolkit.md')
         ToolkitNetworkGuidePath = (Join-Path (Join-Path $ToolkitRoot 'docs') 'Codex-Network-Toolkit.md')
         ToolkitShadowsocksGuidePath = (Join-Path (Join-Path $ToolkitRoot 'docs') 'Codex-Shadowsocks-Toolkit.md')
         ToolkitWebAuthGuidePath = (Join-Path (Join-Path $ToolkitRoot 'docs') 'Codex-Web-Auth-Toolkit.md')
         ToolkitShadowsocksActiveSecretPath = (Join-Path (Join-Path (Join-Path $ToolkitRoot 'config') 'private') 'shadowsocks.active.json')
+        ToolkitAndroidApkToolsPath = (Join-Path (Join-Path $ToolkitRoot 'examples') 'android-apk-tools')
         ToolkitBrowserExtensionStarterPath = (Join-Path (Join-Path $ToolkitRoot 'examples') 'browser-extension-starter')
+        ToolkitTermuxBootstrapPath = (Join-Path (Join-Path $ToolkitRoot 'examples') 'termux-bootstrap')
         StarshipConfigDestination = (Join-Path (Join-Path $ToolkitRoot 'config') 'starship.toml')
     }
 }
@@ -238,6 +241,7 @@ function Get-ToolkitInventoryCommandNames {
 
     foreach ($name in @(
         'codehint', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'lg', 'j', 'bench',
+        'phone-help', 'phone-status', 'phone-diag', 'phone-noise-audit', 'phone-storage-scan', 'phone-ui-dump', 'phone-pull', 'phone-archive', 'phone-mirror', 'phone-shizuku-start', 'phone-apk-list', 'phone-apk-import', 'phone-apk-install',
         'json', 'yaml', 'grepcode', 'proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear',
         'remote-client-init', 'remote-server-bundle', 'remote-health', 'vps-provider-show', 'vps-plan-suggest', 'vps-bundle-new', 'ss-source-show', 'ss-secret-discover',
         'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-client-info', 'ss-client-sync',

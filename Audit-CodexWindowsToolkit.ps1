@@ -97,6 +97,7 @@ function Get-Audit {
         })
 
         $helperProfiles = @(
+            (Join-Path $context.PowerShellRoot 'codex.phone-tools.ps1'),
             (Join-Path $context.PowerShellRoot 'codex.document-tools.ps1'),
             (Join-Path $context.PowerShellRoot 'codex.ocr-translate-tools.ps1'),
             (Join-Path $context.PowerShellRoot 'codex.web-auth-tools.ps1'),
@@ -159,6 +160,13 @@ function Get-Audit {
     })
 
     [void]$audit.Add([pscustomobject]@{
+        Component = 'Phone toolkit guide'
+        Category = 'Toolkit'
+        Status = if (Test-Path -LiteralPath $context.ToolkitPhoneGuidePath) { 'Installed' } else { 'Missing' }
+        Detail = $context.ToolkitPhoneGuidePath
+    })
+
+    [void]$audit.Add([pscustomobject]@{
         Component = 'Web-auth toolkit guide'
         Category = 'Toolkit'
         Status = if (Test-Path -LiteralPath $context.ToolkitWebAuthGuidePath) { 'Installed' } else { 'Missing' }
@@ -180,10 +188,24 @@ function Get-Audit {
     })
 
     [void]$audit.Add([pscustomobject]@{
+        Component = 'Android APK helper examples'
+        Category = 'Toolkit'
+        Status = if (Test-Path -LiteralPath $context.ToolkitAndroidApkToolsPath) { 'Installed' } else { 'Missing' }
+        Detail = $context.ToolkitAndroidApkToolsPath
+    })
+
+    [void]$audit.Add([pscustomobject]@{
         Component = 'Browser extension starter project'
         Category = 'Toolkit'
         Status = if (Test-Path -LiteralPath $context.ToolkitBrowserExtensionStarterPath) { 'Installed' } else { 'Missing' }
         Detail = $context.ToolkitBrowserExtensionStarterPath
+    })
+
+    [void]$audit.Add([pscustomobject]@{
+        Component = 'Termux bootstrap example'
+        Category = 'Toolkit'
+        Status = if (Test-Path -LiteralPath $context.ToolkitTermuxBootstrapPath) { 'Installed' } else { 'Missing' }
+        Detail = $context.ToolkitTermuxBootstrapPath
     })
 
     [void]$audit.Add([pscustomobject]@{

@@ -505,6 +505,11 @@ if (Test-Path -LiteralPath $codexNetworkToolsProfile) {
     . $codexNetworkToolsProfile
 }
 
+$codexPhoneToolsProfile = Join-Path $codexProfileRoot 'codex.phone-tools.ps1'
+if (Test-Path -LiteralPath $codexPhoneToolsProfile) {
+    . $codexPhoneToolsProfile
+}
+
 $codexDocumentToolsProfile = Join-Path $codexProfileRoot 'codex.document-tools.ps1'
 if (Test-Path -LiteralPath $codexDocumentToolsProfile) {
     . $codexDocumentToolsProfile
@@ -620,6 +625,10 @@ function Update-CodexPowerShellMetadata {
         (Get-ResolvedCommandSummary -Name 'doc-pipeline'),
         (Get-ResolvedCommandSummary -Name 'study-summary'),
         (Get-ResolvedCommandSummary -Name 'study-pack'),
+        (Get-ResolvedCommandSummary -Name 'phone-status'),
+        (Get-ResolvedCommandSummary -Name 'phone-diag'),
+        (Get-ResolvedCommandSummary -Name 'phone-ui-dump'),
+        (Get-ResolvedCommandSummary -Name 'phone-mirror'),
         (Get-ResolvedCommandSummary -Name 'auth-browser'),
         (Get-ResolvedCommandSummary -Name 'auth-recover'),
         (Get-ResolvedCommandSummary -Name 'auth-extension-list'),
@@ -629,6 +638,7 @@ function Update-CodexPowerShellMetadata {
 
     $helperNames = @(
         'codehint', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'zi', 'lg', 'j', 'bench',
+        'phone-help', 'phone-status', 'phone-diag', 'phone-noise-audit', 'phone-storage-scan', 'phone-ui-dump', 'phone-pull', 'phone-archive', 'phone-mirror', 'phone-shizuku-start', 'phone-apk-list', 'phone-apk-import', 'phone-apk-install',
         'json', 'yaml', 'grepcode', 'proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear',
         'remote-client-init', 'remote-server-bundle', 'remote-health', 'vps-provider-show', 'vps-plan-suggest', 'vps-bundle-new', 'ss-source-show', 'ss-secret-discover', 'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-client-info', 'ss-client-sync', 'ss-server-bundle',
         'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline', 'doc-scan',
@@ -683,6 +693,23 @@ function Show-CodexShellHints {
                 (Get-CodexHintEntry -Name 'just' -Description 'run project recipes' -Example 'j test'),
                 (Get-CodexHintEntry -Name 'hyperfine' -Description 'benchmark commands' -Example "bench 'npm test' 'pnpm test'"),
                 (Get-CodexHintEntry -Name '7z' -Description 'archive and extract from shell')
+            )
+        },
+        @{
+            Title = 'Phone / Android'
+            Entries = @(
+                (Get-CodexHintEntry -Name 'phone-status' -Description 'show connected phone model, Android version, battery, and storage snapshot'),
+                (Get-CodexHintEntry -Name 'phone-diag' -Description 'collect a timestamped adb diagnostics bundle' -Example 'phone-diag -Samples 2'),
+                (Get-CodexHintEntry -Name 'phone-storage-scan' -Description 'summarize major /sdcard folders by size'),
+                (Get-CodexHintEntry -Name 'phone-ui-dump' -Description 'capture the current screenshot plus UI hierarchy XML' -Example 'phone-ui-dump -OutputDir C:\Exports\phone-ui'),
+                (Get-CodexHintEntry -Name 'phone-pull' -Description 'safely pull a phone path into toolkit state' -Example 'phone-pull -PhonePath /sdcard/Download'),
+                (Get-CodexHintEntry -Name 'phone-archive' -Description 'pull a phone path and then delete the remote original after verification' -Example 'phone-archive -PhonePath /sdcard/DCIM/Camera/VID_20260426_123456.mp4'),
+                (Get-CodexHintEntry -Name 'phone-noise-audit' -Description 'audit wakeups, alarms, and background noise for selected packages' -Example 'phone-noise-audit -Packages com.tencent.mm,com.zhihu.android'),
+                (Get-CodexHintEntry -Name 'phone-mirror' -Description 'start a scrcpy mirror session' -Example 'phone-mirror -StayAwake'),
+                (Get-CodexHintEntry -Name 'phone-shizuku-start' -Description 'start Shizuku over adb'),
+                (Get-CodexHintEntry -Name 'phone-apk-import' -Description 'copy local APK helper tools into toolkit state' -Example 'phone-apk-import -IncludeCommonLocalCandidates'),
+                (Get-CodexHintEntry -Name 'phone-apk-install' -Description 'install an APK by toolkit name or explicit path' -Example 'phone-apk-install -Name Shizuku -Reinstall'),
+                (Get-CodexHintEntry -Name 'phone-help' -Description 'show the phone / Android helper summary')
             )
         },
         @{
@@ -764,6 +791,7 @@ function Show-CodexStartupBanner {
         "nav=$($env:CODEX_NAV_MODE)",
         'toolbelt: rg fd fzf jq yq eza z lazygit just hyperfine 7z xh mise dust procs',
         'docs: ocr-smart pdf-smart translate-smart doc-pipeline study-summary study-pack auth-browser auth-recover auth-chatgpt-ask auth-extension-open',
+        'mobile: adb phone-status phone-diag phone-ui-dump phone-storage-scan phone-mirror phone-shizuku-start',
         'remote: remote-client-init remote-server-bundle remote-health vps-plan-suggest vps-bundle-new ss-client-sync',
         'hint: codehint'
     )
@@ -784,7 +812,7 @@ function whichall {
     [CmdletBinding()]
     param(
         [Parameter(Position = 0, ValueFromRemainingArguments = $true)]
-        [string[]]$Name = @('codehint', 'toolkit-inventory', 'codex', 'curl', 'wget', 'capture2text', 'rg', 'git', 'gh', 'node', 'python', 'fd', 'fzf', 'jq', 'yq', 'uv', 'pnpm', 'bat', 'delta', 'eza', 'zoxide', 'starship', 'lazygit', 'just', 'hyperfine', '7z', 'sd', 'xh', 'mise', 'dust', 'procs', 'nougat', 'ocrmypdf', 'pdftotext', 'pdftoppm', 'mutool', 'tesseract', 'Capture2Text_CLI', 'ollama', 'llava', 'easyocr-read', 'paddleocr-read', 'donut-ocr', 'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline', 'doc-scan', 'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'study-summary', 'study-pack', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'lg', 'j', 'bench', 'json', 'yaml', 'grepcode', 'proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear', 'remote-client-init', 'remote-server-bundle', 'remote-health', 'vps-provider-show', 'vps-plan-suggest', 'vps-bundle-new', 'ss-source-show', 'ss-secret-discover', 'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-client-info', 'ss-client-sync', 'ss-server-bundle', 'auth-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-recover', 'auth-moodle-spec', 'auth-sharepoint-spec', 'auth-panopto-spec', 'auth-moodle-dump', 'auth-sharepoint-dump', 'auth-panopto-dump', 'auth-chatgpt-browser', 'auth-chatgpt-dump', 'auth-chatgpt-export', 'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-extension-install', 'auth-extension-list', 'auth-extension-enable', 'auth-extension-disable', 'auth-extension-open', 'auth-extension-click', 'auth-extension-remove', 'auth-help')
+        [string[]]$Name = @('codehint', 'toolkit-inventory', 'codex', 'curl', 'wget', 'capture2text', 'adb', 'scrcpy', 'rg', 'git', 'gh', 'node', 'python', 'fd', 'fzf', 'jq', 'yq', 'uv', 'pnpm', 'bat', 'delta', 'eza', 'zoxide', 'starship', 'lazygit', 'just', 'hyperfine', '7z', 'sd', 'xh', 'mise', 'dust', 'procs', 'nougat', 'ocrmypdf', 'pdftotext', 'pdftoppm', 'mutool', 'tesseract', 'Capture2Text_CLI', 'ollama', 'llava', 'easyocr-read', 'paddleocr-read', 'donut-ocr', 'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline', 'doc-scan', 'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'study-summary', 'study-pack', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'lg', 'j', 'bench', 'phone-help', 'phone-status', 'phone-diag', 'phone-noise-audit', 'phone-storage-scan', 'phone-ui-dump', 'phone-pull', 'phone-archive', 'phone-mirror', 'phone-shizuku-start', 'phone-apk-list', 'phone-apk-import', 'phone-apk-install', 'json', 'yaml', 'grepcode', 'proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear', 'remote-client-init', 'remote-server-bundle', 'remote-health', 'vps-provider-show', 'vps-plan-suggest', 'vps-bundle-new', 'ss-source-show', 'ss-secret-discover', 'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-client-info', 'ss-client-sync', 'ss-server-bundle', 'auth-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-recover', 'auth-moodle-spec', 'auth-sharepoint-spec', 'auth-panopto-spec', 'auth-moodle-dump', 'auth-sharepoint-dump', 'auth-panopto-dump', 'auth-chatgpt-browser', 'auth-chatgpt-dump', 'auth-chatgpt-export', 'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-extension-install', 'auth-extension-list', 'auth-extension-enable', 'auth-extension-disable', 'auth-extension-open', 'auth-extension-click', 'auth-extension-remove', 'auth-help')
     )
 
     foreach ($query in $Name) {
@@ -818,6 +846,10 @@ function Show-CodexToolkitInventory {
         @{
             Title = 'Toolkit Helpers'
             Names = @('codehint', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'lg', 'j', 'bench', 'json', 'yaml', 'grepcode')
+        }
+        @{
+            Title = 'Phone / Android'
+            Names = @('adb', 'scrcpy', 'phone-help', 'phone-status', 'phone-diag', 'phone-noise-audit', 'phone-storage-scan', 'phone-ui-dump', 'phone-pull', 'phone-archive', 'phone-mirror', 'phone-shizuku-start', 'phone-apk-list', 'phone-apk-import', 'phone-apk-install')
         }
         @{
             Title = 'Remote / Network'

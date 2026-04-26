@@ -1,5 +1,20 @@
 # Release Notes
 
+## v1.5.0
+
+Android phone-debugging toolkit integration.
+
+### Highlights
+
+- Added `codex.phone-tools.ps1` with first-class PowerShell commands for `adb` status, diagnostics, noise audits, storage scans, UI dumps, safe pulls/archives, scrcpy launch, Shizuku startup, and APK staging
+- Added Android platform-tools to the baseline installer manifest and `scrcpy` to the optional tool list
+- Added a phone toolkit guide plus managed example roots for Android APK helpers and a Termux bootstrap script
+- Expanded `codehint`, inventory, audit, and installer/wizard messaging so the phone-debugging layer is visible and discoverable on fresh machines
+
+### Why this release matters
+
+The toolkit now covers a common adjacent workflow too: Android device debugging from the same PowerShell environment. Instead of leaving phone automation as a pile of one-off scripts on the Desktop, the useful parts now live under the same reproducible installer, profile, and audit flow as the rest of the Codex workstation.
+
 ## v1.4.1
 
 Installer reliability fixes from a real repair run.

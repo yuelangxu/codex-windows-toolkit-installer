@@ -1,0 +1,32 @@
+[
+  {
+    "Name": "Shizuku",
+    "FileName": "shizuku-v13.5.4.r1049.0e53409-release.apk",
+    "Purpose": "ADB-bootstrapped privilege bridge that unlocks higher-power local tools without full root.",
+    "SourceHint": "Import a local Shizuku APK and install it with phone-apk-install."
+  },
+  {
+    "Name": "App Manager",
+    "FileName": "AppManager_v4.0.5.apk",
+    "Purpose": "Package inspection, component review, backup, and app management helper.",
+    "SourceHint": "Import a local App Manager APK and install it with phone-apk-install."
+  },
+  {
+    "Name": "Hail",
+    "FileName": "Hail-v1.10.0.apk",
+    "Purpose": "Freeze / hide apps through Shizuku-backed workflows.",
+    "SourceHint": "Import a local Hail APK and install it with phone-apk-install."
+  },
+  {
+    "Name": "ShizuWall",
+    "FileName": "ShizuWall-4.4.1-fdroid-release.apk",
+    "Purpose": "Shizuku-oriented firewall and app network control helper.",
+    "SourceHint": "Import a local ShizuWall APK and install it with phone-apk-install."
+  },
+  {
+    "Name": "Termux",
+    "FileName": "termux-app_v0.118.3_arm64-v8a.apk",
+    "Purpose": "On-device shell and automation environment that pairs well with exported bootstrap scripts.",
+    "SourceHint": "Import a local Termux APK and install it with phone-apk-install."
+  }
+]
