@@ -135,6 +135,18 @@ Enabled extensions are loaded together into the managed automation browser, whic
 The extension helpers can also open an extension popup or options page and click controls inside that UI, which makes extension-based auth, wallet, scraper, or productivity workflows much easier to automate from PowerShell.
 The installer now deploys a browser-extension starter project under `Toolkit\examples\browser-extension-starter`, so a fresh machine has an immediate local target for extension automation tests.
 
+### Multi-browser auth automation helpers
+
+- `auth-browser-list`
+- `auth-comet-browser`
+- `auth-perplexity-ask`
+
+The web-auth layer now treats browser selection as an explicit part of the command surface instead of assuming Edge.
+Chromium-family automation commands can target `edge`, `chrome`, `chromium`, `comet`, or `opera`, which makes it much easier to reuse the cookies and saved sessions that already live in the browser you actually use.
+This is especially useful for flows like Moodle, SharePoint, or ChatGPT where the authenticated state may exist in Comet or another Chromium profile but not in Edge.
+The toolkit can also launch a managed Comet session and drive Perplexity through that browser from PowerShell, which makes “ask a question from the shell, save the answer bundle locally” a first-class workflow.
+Firefox is still detected in inventory, but live automation remains Chromium-first for now because the current runtime is built on CDP rather than a separate Firefox control path.
+
 ## Why this improves Codex productivity
 
 This toolkit raises the floor and the ceiling for Codex on Windows.
@@ -144,6 +156,7 @@ This toolkit raises the floor and the ceiling for Codex on Windows.
 - It adds phone-debugging commands for Android diagnostics, ADB capture, storage review, Shizuku startup, and local APK staging, so cross-device workflows can be driven from the same shell.
 - It adds remote/network commands that can bootstrap SSH settings, check reachability, and locally import private Shadowsocks config without leaking secrets into source control.
 - It adds authenticated ChatGPT automation commands to the same PowerShell toolbelt, so browser-driven save, dump, ask, and cleanup workflows live beside the rest of the auth tooling.
+- It adds explicit browser selection and Comet-aware automation, so Codex can reuse the authenticated browser state that is actually present on the machine instead of silently falling back to Edge-only assumptions.
 - It adds browser-extension management and extension-UI automation, so Codex can install helper extensions, load them into a predictable browser session, and drive their popups or settings pages from the shell.
 - It improves shell feedback with inventory, prediction, aliases, and prompt context, which shortens the loop between idea and execution.
 - It avoids common Windows failure modes around OCR, Python package compatibility, DLL paths, and profile location mismatches.

@@ -60,52 +60,170 @@ if missing:
     }
 }
 
-function Get-CodexChromiumExecutable {
+function Get-CodexSupportedBrowserDefinitions {
     [CmdletBinding()]
-    param(
-        [ValidateSet('edge', 'chrome')]
-        [string]$Browser = 'edge'
-    )
+    param()
 
-    $candidates = switch ($Browser) {
-        'edge' {
-            @(
+    return [ordered]@{
+        edge = [ordered]@{
+            Name = 'edge'
+            Family = 'chromium'
+            ProcessName = 'msedge'
+            ExecutableCandidates = @(
                 "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
                 "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
             )
+            UserDataDir = (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data')
+            ExtensionsManagerUrl = 'edge://extensions/'
         }
-        'chrome' {
-            @(
+        chrome = [ordered]@{
+            Name = 'chrome'
+            Family = 'chromium'
+            ProcessName = 'chrome'
+            ExecutableCandidates = @(
                 "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
                 "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
             )
+            UserDataDir = (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data')
+            ExtensionsManagerUrl = 'chrome://extensions/'
+        }
+        chromium = [ordered]@{
+            Name = 'chromium'
+            Family = 'chromium'
+            ProcessName = 'chromium'
+            ExecutableCandidates = @(
+                "$env:ProgramFiles\Chromium\Application\chrome.exe",
+                "${env:ProgramFiles(x86)}\Chromium\Application\chrome.exe",
+                "$env:LOCALAPPDATA\Chromium\Application\chrome.exe"
+            )
+            UserDataDir = (Join-Path $env:LOCALAPPDATA 'Chromium\User Data')
+            ExtensionsManagerUrl = 'chrome://extensions/'
+        }
+        comet = [ordered]@{
+            Name = 'comet'
+            Family = 'chromium'
+            ProcessName = 'comet'
+            ExecutableCandidates = @(
+                "$env:ProgramFiles\Perplexity\Comet\Application\comet.exe",
+                "${env:ProgramFiles(x86)}\Perplexity\Comet\Application\comet.exe",
+                "$env:LOCALAPPDATA\Programs\Comet\Application\comet.exe"
+            )
+            UserDataDir = (Join-Path $env:LOCALAPPDATA 'Perplexity\Comet\User Data')
+            ExtensionsManagerUrl = 'chrome://extensions/'
+        }
+        opera = [ordered]@{
+            Name = 'opera'
+            Family = 'chromium'
+            ProcessName = 'opera'
+            ExecutableCandidates = @(
+                "$env:LOCALAPPDATA\Programs\Opera\opera.exe",
+                "$env:ProgramFiles\Opera\opera.exe",
+                "${env:ProgramFiles(x86)}\Opera\opera.exe",
+                "$env:LOCALAPPDATA\Programs\Opera GX\launcher.exe"
+            )
+            UserDataDir = (Join-Path $env:APPDATA 'Opera Software\Opera Stable')
+            ExtensionsManagerUrl = 'chrome://extensions/'
+        }
+        firefox = [ordered]@{
+            Name = 'firefox'
+            Family = 'firefox'
+            ProcessName = 'firefox'
+            ExecutableCandidates = @(
+                "$env:ProgramFiles\Mozilla Firefox\firefox.exe",
+                "${env:ProgramFiles(x86)}\Mozilla Firefox\firefox.exe"
+            )
+            UserDataDir = (Join-Path $env:APPDATA 'Mozilla\Firefox\Profiles')
+            ExtensionsManagerUrl = ''
+        }
+    }
+}
+
+function Resolve-CodexBrowserDefinition {
+    [CmdletBinding()]
+    param(
+        [string]$Browser = 'edge'
+    )
+
+    $normalized = if ([string]::IsNullOrWhiteSpace($Browser)) { 'edge' } else { $Browser.Trim().ToLowerInvariant() }
+    $definitions = Get-CodexSupportedBrowserDefinitions
+    if (-not $definitions.Contains($normalized)) {
+        $available = [string]::Join(', ', $definitions.Keys)
+        throw "Unsupported browser '$Browser'. Supported browsers: $available"
+    }
+
+    $definition = $definitions[$normalized]
+    return [pscustomobject]@{
+        Name = [string]$definition.Name
+        Family = [string]$definition.Family
+        ProcessName = [string]$definition.ProcessName
+        ExecutableCandidates = @($definition.ExecutableCandidates)
+        UserDataDir = [string]$definition.UserDataDir
+        ExtensionsManagerUrl = [string]$definition.ExtensionsManagerUrl
+    }
+}
+
+function Assert-CodexCdpCompatibleBrowser {
+    [CmdletBinding()]
+    param(
+        [string]$Browser = 'edge'
+    )
+
+    $definition = Resolve-CodexBrowserDefinition -Browser $Browser
+    if ($definition.Family -ne 'chromium') {
+        throw ("Browser '{0}' is installed as a {1} browser, but the current live automation path expects a Chromium-family browser with a CDP endpoint. Use edge/chrome/chromium/comet/opera for live browser automation." -f $definition.Name, $definition.Family)
+    }
+
+    return $definition
+}
+
+function Get-CodexBrowserInventory {
+    [CmdletBinding()]
+    param()
+
+    $items = foreach ($key in (Get-CodexSupportedBrowserDefinitions).Keys) {
+        $definition = Resolve-CodexBrowserDefinition -Browser $key
+        $installedExecutable = @($definition.ExecutableCandidates | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path -LiteralPath $_) } | Select-Object -First 1)
+        [pscustomobject]@{
+            Browser = $definition.Name
+            Family = $definition.Family
+            Installed = ($installedExecutable.Count -gt 0)
+            ExecutablePath = if ($installedExecutable.Count -gt 0) { $installedExecutable[0] } else { '' }
+            UserDataDir = $definition.UserDataDir
+            SupportsCdp = ($definition.Family -eq 'chromium')
+            SupportsToolkitAutomation = ($definition.Family -eq 'chromium')
         }
     }
 
-    foreach ($candidate in $candidates) {
+    return [pscustomobject]@{
+        count = @($items).Count
+        items = @($items)
+    }
+}
+
+function Get-CodexChromiumExecutable {
+    [CmdletBinding()]
+    param(
+        [string]$Browser = 'edge'
+    )
+
+    $definition = Assert-CodexCdpCompatibleBrowser -Browser $Browser
+    foreach ($candidate in $definition.ExecutableCandidates) {
         if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate)) {
             return $candidate
         }
     }
 
-    throw "Unable to find the $Browser executable."
+    throw "Unable to find the $($definition.Name) executable."
 }
 
 function Get-CodexChromiumUserDataDir {
     [CmdletBinding()]
     param(
-        [ValidateSet('edge', 'chrome')]
         [string]$Browser = 'edge'
     )
 
-    switch ($Browser) {
-        'edge' {
-            return (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data')
-        }
-        'chrome' {
-            return (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data')
-        }
-    }
+    $definition = Resolve-CodexBrowserDefinition -Browser $Browser
+    return $definition.UserDataDir
 }
 
 function Get-CodexAuthProfileRoot {
@@ -147,7 +265,7 @@ function Get-CodexChatGptBrowserStateRoot {
 function Get-CodexChatGptManagedUserDataDir {
     [CmdletBinding()]
     param(
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser = 'edge'
     )
 
@@ -218,7 +336,7 @@ function Get-CodexChromiumSessionRegistry {
         return @()
     }
 
-    $parsed = $raw | ConvertFrom-Json -Depth 10
+    $parsed = $raw | ConvertFrom-Json
     if ($null -eq $parsed) {
         return @()
     }
@@ -241,7 +359,7 @@ function Set-CodexChromiumSessionEntry {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser,
 
         [Parameter(Mandatory = $true)]
@@ -292,7 +410,7 @@ function Set-CodexChromiumSessionEntry {
 function Get-CodexChromiumSessionEntry {
     [CmdletBinding()]
     param(
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser,
 
         [int]$Port
@@ -338,7 +456,7 @@ function Get-CodexBrowserExtensionRegistry {
         return @()
     }
 
-    $parsed = $raw | ConvertFrom-Json -Depth 12
+    $parsed = $raw | ConvertFrom-Json
     if ($null -eq $parsed) {
         return @()
     }
@@ -364,7 +482,7 @@ function Resolve-CodexBrowserExtensionEntry {
         [Parameter(Mandatory = $true)]
         [string]$Name,
 
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser
     )
 
@@ -467,7 +585,7 @@ function Remove-CodexBrowserExtensionRegistryEntry {
         [Parameter(Mandatory = $true)]
         [string]$Name,
 
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser
     )
 
@@ -490,7 +608,7 @@ function Remove-CodexBrowserExtensionRegistryEntry {
 function Get-CodexEnabledBrowserExtensionDirectories {
     [CmdletBinding()]
     param(
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser = 'edge'
     )
 
@@ -529,7 +647,7 @@ function Get-CodexEnabledBrowserExtensionDirectories {
 function Get-CodexChromiumExtensionSwitches {
     [CmdletBinding()]
     param(
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser = 'edge'
     )
 
@@ -593,7 +711,7 @@ function Resolve-CodexChatGptBrowser {
     )
 
     if (-not [string]::IsNullOrWhiteSpace($Browser)) {
-        return $Browser.ToLowerInvariant()
+        return (Resolve-CodexBrowserDefinition -Browser $Browser).Name
     }
 
     $raw = [Environment]::GetEnvironmentVariable('CODEX_CHATGPT_BROWSER')
@@ -601,19 +719,20 @@ function Resolve-CodexChatGptBrowser {
         return 'edge'
     }
 
-    return $raw.ToLowerInvariant()
+    return (Resolve-CodexBrowserDefinition -Browser $raw).Name
 }
 
 function Get-CodexChatGptBrowserLaunchPlan {
     [CmdletBinding()]
     param(
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser = 'edge',
 
         [switch]$ForceRestartBrowser
     )
 
-    $processName = if ($Browser -eq 'edge') { 'msedge' } else { 'chrome' }
+    $definition = Assert-CodexCdpCompatibleBrowser -Browser $Browser
+    $processName = $definition.ProcessName
     $running = @(Get-Process -Name $processName -ErrorAction SilentlyContinue)
     $useManagedUserData = (-not $ForceRestartBrowser)
     $userDataDir = if ($useManagedUserData) {
@@ -948,7 +1067,7 @@ function New-CodexChatGptPromptTempFile {
 function Start-CodexAuthBrowser {
     [CmdletBinding()]
     param(
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser = 'edge',
 
         [string]$ProfileDirectory = 'Default',
@@ -965,6 +1084,8 @@ function Start-CodexAuthBrowser {
 
         [switch]$PassThru
     )
+
+    $definition = Assert-CodexCdpCompatibleBrowser -Browser $Browser
 
     if ([string]::IsNullOrWhiteSpace($UserDataDir)) {
         $userDataDir = Get-CodexChromiumUserDataDir -Browser $Browser
@@ -992,7 +1113,7 @@ function Start-CodexAuthBrowser {
 
     $exePath = Get-CodexChromiumExecutable -Browser $Browser
     New-Item -ItemType Directory -Path $userDataDir -Force | Out-Null
-    $processName = if ($Browser -eq 'edge') { 'msedge' } else { 'chrome' }
+    $processName = $definition.ProcessName
     $running = @(Get-Process -Name $processName -ErrorAction SilentlyContinue)
 
     if ($running.Count -gt 0 -and -not $ForceRestart -and -not $AllowConcurrentInstance) {
@@ -1127,7 +1248,7 @@ function Ensure-CodexChatGptBrowserSession {
 function Start-CodexChatGptBrowserSession {
     [CmdletBinding()]
     param(
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser,
 
         [int]$Port = 0,
@@ -1383,7 +1504,7 @@ function Export-CodexChatGptDump {
 
         [int]$Port = 0,
 
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser,
 
         [switch]$ForceRestartBrowser,
@@ -1508,7 +1629,7 @@ function Export-CodexChatGptLearningDump {
 
         [int]$Port = 0,
 
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser,
 
         [switch]$ForceRestartBrowser,
@@ -1528,7 +1649,7 @@ function Get-CodexChatGptConversationList {
         [string]$PageUrlContains = 'chatgpt.com',
         [string]$TitleContains,
         [int]$Port = 0,
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser,
         [switch]$ForceRestartBrowser,
         [int]$Limit
@@ -1560,7 +1681,7 @@ function Open-CodexChatGptConversation {
         [switch]$NewChat,
         [string]$ExportDir,
         [int]$Port = 0,
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser,
         [switch]$ForceRestartBrowser
     )
@@ -1599,7 +1720,7 @@ function Save-CodexChatGptConversation {
         [string]$TitleContains,
         [switch]$NewChat,
         [int]$Port = 0,
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser,
         [switch]$ForceRestartBrowser
     )
@@ -1650,7 +1771,7 @@ function Invoke-CodexChatGptPrompt {
         [int]$TimeoutSeconds = 300,
         [int]$MaxTotalSeconds = 0,
         [int]$Port = 0,
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser,
         [switch]$ForceRestartBrowser,
 
@@ -1772,7 +1893,7 @@ function Remove-CodexChatGptConversation {
         [string]$ExportDir,
         [switch]$Force,
         [int]$Port = 0,
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser,
         [switch]$ForceRestartBrowser
     )
@@ -1849,7 +1970,7 @@ function Test-CodexPathWithinRoot {
 function Get-CodexBrowserExtensionRuntimeList {
     [CmdletBinding()]
     param(
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser = 'edge',
 
         [int]$Port = 0,
@@ -1857,6 +1978,7 @@ function Get-CodexBrowserExtensionRuntimeList {
         [switch]$ForceRestartBrowser
     )
 
+    Assert-CodexCdpCompatibleBrowser -Browser $Browser | Out-Null
     $context = Ensure-CodexChatGptBrowserSession -Browser $Browser -Port $Port -Url 'about:blank' -ForceRestartBrowser:$ForceRestartBrowser -PassThru
     $arguments = @('extension-runtime-list', '--cdp', "http://127.0.0.1:$($context.Port)", '--browser', $Browser)
     if (-not [string]::IsNullOrWhiteSpace([string]$context.UserDataDir)) {
@@ -1871,7 +1993,7 @@ function Resolve-CodexBrowserExtensionRuntimeEntry {
         [Parameter(Mandatory = $true)]
         $Entry,
 
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser = 'edge',
 
         [int]$Port = 0,
@@ -1974,7 +2096,7 @@ function Install-CodexBrowserExtension {
 
         [string]$Name,
 
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser = 'edge',
 
         [switch]$Disabled,
@@ -1984,6 +2106,7 @@ function Install-CodexBrowserExtension {
         [switch]$RestartBrowser
     )
 
+    Assert-CodexCdpCompatibleBrowser -Browser $Browser | Out-Null
     Initialize-CodexBrowserExtensionState
 
     $arguments = @(
@@ -2049,7 +2172,7 @@ function Install-CodexBrowserExtension {
 function Get-CodexBrowserExtensions {
     [CmdletBinding()]
     param(
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser,
 
         [switch]$EnabledOnly,
@@ -2061,6 +2184,9 @@ function Get-CodexBrowserExtensions {
         [switch]$ForceRestartBrowser
     )
 
+    if ($IncludeRuntime -and (-not [string]::IsNullOrWhiteSpace($Browser))) {
+        Assert-CodexCdpCompatibleBrowser -Browser $Browser | Out-Null
+    }
     $entries = @(Get-CodexBrowserExtensionRegistry)
     if (-not [string]::IsNullOrWhiteSpace($Browser)) {
         $entries = @($entries | Where-Object { $_.browser -eq $Browser })
@@ -2114,7 +2240,7 @@ function Enable-CodexBrowserExtension {
         [Parameter(Mandatory = $true)]
         [string]$Name,
 
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser,
 
         [switch]$RestartBrowser
@@ -2155,7 +2281,7 @@ function Disable-CodexBrowserExtension {
         [Parameter(Mandatory = $true)]
         [string]$Name,
 
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser,
 
         [switch]$RestartBrowser
@@ -2196,7 +2322,7 @@ function Remove-CodexBrowserExtension {
         [Parameter(Mandatory = $true)]
         [string]$Name,
 
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser,
 
         [switch]$RestartBrowser
@@ -2240,7 +2366,7 @@ function Open-CodexBrowserExtension {
 
         [string]$Url,
 
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser = 'edge',
 
         [int]$Port = 0,
@@ -2248,6 +2374,7 @@ function Open-CodexBrowserExtension {
         [switch]$ForceRestartBrowser
     )
 
+    Assert-CodexCdpCompatibleBrowser -Browser $Browser | Out-Null
     $entry = Resolve-CodexBrowserExtensionEntry -Name $Name -Browser $Browser
     $target = Resolve-CodexBrowserExtensionTarget -Entry $entry -Surface $Surface -PagePath $PagePath -Url $Url
     $context = Ensure-CodexChatGptBrowserSession -Browser $Browser -Port $Port -Url 'about:blank' -ForceRestartBrowser:$ForceRestartBrowser -PassThru
@@ -2294,7 +2421,7 @@ function Invoke-CodexBrowserExtensionClick {
 
         [int]$TimeoutMilliseconds = 5000,
 
-        [ValidateSet('edge', 'chrome')]
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
         [string]$Browser = 'edge',
 
         [int]$Port = 0,
@@ -2306,6 +2433,7 @@ function Invoke-CodexBrowserExtensionClick {
         throw 'Provide -Selector or -TextContains.'
     }
 
+    Assert-CodexCdpCompatibleBrowser -Browser $Browser | Out-Null
     $entry = Resolve-CodexBrowserExtensionEntry -Name $Name -Browser $Browser
     $target = Resolve-CodexBrowserExtensionTarget -Entry $entry -Surface $Surface -PagePath $PagePath -Url $Url
     $context = Ensure-CodexChatGptBrowserSession -Browser $Browser -Port $Port -Url 'about:blank' -ForceRestartBrowser:$ForceRestartBrowser -PassThru
@@ -2427,6 +2555,129 @@ function Invoke-CodexPanoptoDump {
     Invoke-CodexAuthDump -Site 'panopto' -Url $Url -PageUrlContains $PageUrlContains -DestinationDir $DestinationDir -RootName $RootName -SpecPath $SpecPath -ManifestPath $ManifestPath -Port $Port -Limit $Limit
 }
 
+function Open-CodexCometBrowser {
+    [CmdletBinding()]
+    param(
+        [string]$Url = 'https://www.perplexity.ai/',
+        [int]$Port = 9444,
+        [string]$ProfileDirectory = 'Default',
+        [string]$UserDataDir,
+        [switch]$ForceRestart,
+        [switch]$AllowConcurrentInstance,
+        [switch]$PassThru
+    )
+
+    Start-CodexAuthBrowser -Browser 'comet' -Url $Url -Port $Port -ProfileDirectory $ProfileDirectory -UserDataDir $UserDataDir -ForceRestart:$ForceRestart -AllowConcurrentInstance:$AllowConcurrentInstance -PassThru:$PassThru
+}
+
+function Invoke-CodexPerplexityPrompt {
+    [CmdletBinding()]
+    param(
+        [Parameter(Position = 0)]
+        [Alias('Text')]
+        [string]$Prompt,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationDir,
+
+        [Alias('PromptFile')]
+        [string]$PromptPath,
+
+        [string]$PromptBase64,
+
+        [string]$Url = 'https://www.perplexity.ai/',
+        [string]$PageUrlContains = 'perplexity.ai',
+        [string]$ResultName,
+        [int]$TimeoutSeconds = 300,
+        [int]$MaxTotalSeconds = 0,
+        [int]$Port = 9444,
+        [ValidateSet('edge', 'chrome', 'chromium', 'comet', 'opera', 'firefox')]
+        [string]$Browser = 'comet',
+        [switch]$ForceRestartBrowser,
+
+        [Parameter(ValueFromPipeline = $true)]
+        [AllowEmptyString()]
+        [string]$PromptInput
+    )
+
+    begin {
+        $pipelinePromptLines = New-Object System.Collections.Generic.List[string]
+    }
+
+    process {
+        if ($MyInvocation.ExpectingInput -and $null -ne $PromptInput) {
+            [void]$pipelinePromptLines.Add([string]$PromptInput)
+        }
+    }
+
+    end {
+        $hasPromptPath = -not [string]::IsNullOrWhiteSpace($PromptPath)
+        $hasPromptBase64 = -not [string]::IsNullOrWhiteSpace($PromptBase64)
+        $hasInlinePrompt = -not [string]::IsNullOrWhiteSpace($Prompt)
+        $hasPipelinePrompt = $pipelinePromptLines.Count -gt 0
+
+        $promptSourceCount = 0
+        if ($hasPromptPath) { $promptSourceCount += 1 }
+        if ($hasPromptBase64) { $promptSourceCount += 1 }
+        if ($hasInlinePrompt) { $promptSourceCount += 1 }
+        if ($hasPipelinePrompt) { $promptSourceCount += 1 }
+
+        if ($promptSourceCount -eq 0) {
+            throw ("A prompt is required.`n{0}" -f (Get-CodexPromptUsageHint))
+        }
+
+        if ($promptSourceCount -gt 1) {
+            throw 'Use exactly one prompt source: inline text, pipeline input, -PromptPath, or -PromptBase64.'
+        }
+
+        $resolvedPrompt = $null
+        if ($hasPromptPath) {
+            $resolvedPromptPath = (Resolve-Path -LiteralPath $PromptPath -ErrorAction Stop).Path
+            $resolvedPrompt = Get-Content -LiteralPath $resolvedPromptPath -Raw -ErrorAction Stop
+        } elseif ($hasPromptBase64) {
+            $resolvedPrompt = ConvertFrom-CodexPromptBase64 -PromptBase64 $PromptBase64
+        } elseif ($hasInlinePrompt) {
+            $resolvedPrompt = $Prompt
+        } elseif ($hasPipelinePrompt) {
+            $resolvedPrompt = [string]::Join([Environment]::NewLine, $pipelinePromptLines)
+        }
+
+        if ([string]::IsNullOrWhiteSpace($resolvedPrompt)) {
+            throw ("Prompt text resolved to an empty string.`n{0}" -f (Get-CodexPromptUsageHint))
+        }
+
+        $resolvedDestinationDir = Resolve-CodexExistingDirectory -Path $DestinationDir -Label 'Perplexity destination directory'
+        $context = Ensure-CodexChatGptBrowserSession -Browser $Browser -Port $Port -Url $Url -ForceRestartBrowser:$ForceRestartBrowser -PassThru
+        $Port = $context.Port
+        $promptTransportPath = $null
+        try {
+            $arguments = @('perplexity-ask', '--cdp', "http://127.0.0.1:$Port", '--url', $Url, '--destination-dir', $resolvedDestinationDir)
+            if (-not [string]::IsNullOrWhiteSpace($PageUrlContains)) {
+                $arguments += @('--page-url-contains', $PageUrlContains)
+            }
+            if (-not [string]::IsNullOrWhiteSpace($ResultName)) {
+                $arguments += @('--result-name', $ResultName)
+            }
+            $arguments += @('--timeout', $TimeoutSeconds.ToString(), '--max-total-seconds', $MaxTotalSeconds.ToString())
+
+            $inlinePromptThreshold = Get-CodexChatGptInlinePromptThreshold
+            $usePromptFileTransport = $resolvedPrompt.Length -ge $inlinePromptThreshold -or $resolvedPrompt.Contains("`r") -or $resolvedPrompt.Contains("`n")
+            if ($usePromptFileTransport) {
+                $promptTransportPath = New-CodexChatGptPromptTempFile -Prompt $resolvedPrompt
+                $arguments += @('--prompt-file', $promptTransportPath)
+            } else {
+                $arguments += @('--prompt', $resolvedPrompt)
+            }
+
+            return (Invoke-CodexAuthHelper -Arguments $arguments)
+        } finally {
+            if (-not [string]::IsNullOrWhiteSpace($promptTransportPath) -and (Test-Path -LiteralPath $promptTransportPath)) {
+                Remove-Item -LiteralPath $promptTransportPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
 function Show-CodexAuthHelp {
     [CmdletBinding()]
     param()
@@ -2434,33 +2685,40 @@ function Show-CodexAuthHelp {
     @'
 Codex web-auth helpers
 
-0. Prepare the dedicated ChatGPT automation browser:
+0. Inspect which local browser profiles the toolkit can target:
+   auth-browser-list
+
+1. Prepare the dedicated ChatGPT automation browser:
    auth-chatgpt-browser
    The first time you use the dedicated automation profile, sign in to ChatGPT once in that browser window.
    The dedicated browser state lives under the PowerShell toolkit root instead of the Desktop.
    If you explicitly want to reuse your normal Edge profile for one command, use -ForceRestartBrowser.
 
-1. Start a logged-in browser with CDP enabled:
+2. Start a logged-in browser with CDP enabled:
    auth-browser -Browser edge -ForceRestart -Url https://example.com
+   auth-browser -Browser comet -ForceRestart -Url https://moodle.ucl.ac.uk/my/
+   auth-comet-browser -ForceRestart
+   Use -Browser edge / chrome / chromium / comet / opera to choose which cookie-bearing Chromium profile should be reused.
+   Firefox is detected by auth-browser-list, but live automation still requires a Chromium-family browser with CDP.
 
-2. Export links from the current authenticated page:
+3. Export links from the current authenticated page:
    auth-links -PageUrlContains example.com/dashboard -OutFile .\links.json
 
-3. Infer a structured download spec from the current page:
+4. Infer a structured download spec from the current page:
    auth-spec -Site auto -PageUrlContains example.com/dashboard -OutFile .\download_spec.json
    auth-moodle-spec -PageUrlContains moodle.ucl.ac.uk/course/view.php?id=123
 
-4. Save one authenticated resource:
+5. Save one authenticated resource:
    auth-save -Url https://example.com/file/123 -DestinationDir .\Downloads -Mode auto
    auth-save -Url https://moodle.ucl.ac.uk/mod/quiz/view.php?id=123 -DestinationDir .\QuizDump -Mode quiz
 
-5. Save a page as HTML:
+6. Save a page as HTML:
    auth-html -Url https://example.com/notes/1 -DestinationDir .\Pages
 
-6. Run a batch download spec:
+7. Run a batch download spec:
    auth-batch -SpecPath .\downloads.json -DestinationDir .\SiteDump -ManifestPath .\manifest.json
 
-7. Do the whole flow in one command:
+8. Do the whole flow in one command:
    auth-dump -Site moodle -PageUrlContains moodle.ucl.ac.uk/course/view.php?id=123 -DestinationDir .\Exports
    auth-moodle-dump -PageUrlContains moodle.ucl.ac.uk/course/view.php?id=123 -DestinationDir .\Exports
    auth-sharepoint-dump -PageUrlContains sharepoint.com -DestinationDir .\Exports
@@ -2471,7 +2729,7 @@ Codex web-auth helpers
    auth-chatgpt-dump -DestinationDir C:\Exports -SaveAll
    auth-chatgpt-study-dump -DestinationDir C:\Exports
 
-8. Use -Limit for a small smoke test before a full site dump:
+9. Use -Limit for a small smoke test before a full site dump:
    auth-dump -Site moodle -PageUrlContains moodle.ucl.ac.uk/course/view.php?id=123 -DestinationDir .\Test -Limit 5
    auth-chatgpt-dump -DestinationDir C:\Exports -Keyword 'UCL','physics' -TopicLabel learning -Limit 12
 
@@ -2490,7 +2748,11 @@ Codex web-auth helpers
    auth-chatgpt-ask -NewChat -DestinationDir C:\Exports -PromptPath C:\Prompts\ask.txt
    auth-chatgpt-ask -NewChat -DestinationDir C:\Exports -TimeoutSeconds 120 -MaxTotalSeconds 0 "Write a long, detailed answer without cutting off early."
 
-11. Browser extension helpers:
+11. Perplexity / Comet helpers:
+   auth-perplexity-ask -DestinationDir C:\Exports "Summarize the current banking AI landscape."
+   auth-perplexity-ask -Browser comet -DestinationDir C:\Exports -PromptPath C:\Prompts\banking.txt
+
+12. Browser extension helpers:
    auth-extension-install -SourceUrl https://example.com/extensions/my-extension.zip -Name MyExtension
    auth-extension-install -DirectoryPath C:\Ext\MyExtension -Name MyExtension
    auth-extension-install -PackagePath C:\Downloads\extension.zip -Name MyExtension
@@ -2505,7 +2767,7 @@ Codex web-auth helpers
    auth-extension-remove -Name MyExtension
    Enabled extensions are loaded together into the managed browser session, so multiple browser plugins can cooperate in one automation run.
 
-9. ChatGPT safety note:
+13. ChatGPT safety note:
    Broad keywords and -SaveAll can touch too many conversations too quickly.
    That may trigger temporary ChatGPT protections or temporary closures.
    ChatGPT commands now auto-prepare their own browser session instead of requiring a separate auth-browser step first.
@@ -2534,6 +2796,8 @@ Batch spec example:
 }
 
 Set-Alias -Name auth-browser -Value Start-CodexAuthBrowser -Scope Global -Option AllScope -Force
+Set-Alias -Name auth-browser-list -Value Get-CodexBrowserInventory -Scope Global -Option AllScope -Force
+Set-Alias -Name auth-comet-browser -Value Open-CodexCometBrowser -Scope Global -Option AllScope -Force
 Set-Alias -Name auth-links -Value Export-CodexAuthLinks -Scope Global -Option AllScope -Force
 Set-Alias -Name auth-spec -Value New-CodexAuthSpec -Scope Global -Option AllScope -Force
 Set-Alias -Name auth-save -Value Save-CodexAuthContent -Scope Global -Option AllScope -Force
@@ -2555,6 +2819,7 @@ Set-Alias -Name auth-chatgpt-open -Value Open-CodexChatGptConversation -Scope Gl
 Set-Alias -Name auth-chatgpt-save -Value Save-CodexChatGptConversation -Scope Global -Option AllScope -Force
 Set-Alias -Name auth-chatgpt-ask -Value Invoke-CodexChatGptPrompt -Scope Global -Option AllScope -Force
 Set-Alias -Name auth-chatgpt-delete -Value Remove-CodexChatGptConversation -Scope Global -Option AllScope -Force
+Set-Alias -Name auth-perplexity-ask -Value Invoke-CodexPerplexityPrompt -Scope Global -Option AllScope -Force
 Set-Alias -Name auth-extension-install -Value Install-CodexBrowserExtension -Scope Global -Option AllScope -Force
 Set-Alias -Name auth-extension-list -Value Get-CodexBrowserExtensions -Scope Global -Option AllScope -Force
 Set-Alias -Name auth-extension-enable -Value Enable-CodexBrowserExtension -Scope Global -Option AllScope -Force

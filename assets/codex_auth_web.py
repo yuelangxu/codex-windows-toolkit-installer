@@ -2638,6 +2638,321 @@ def cmd_chatgpt_ask(args) -> Dict[str, Any]:
         playwright.stop()
 
 
+def open_perplexity_target(page, url: str = "https://www.perplexity.ai/") -> None:
+    target_url = clean_text(url) or "https://www.perplexity.ai/"
+    page.goto(target_url, wait_until="domcontentloaded", timeout=120000)
+    page.wait_for_timeout(1800)
+
+
+def find_perplexity_composer(page):
+    selectors = [
+        ("textarea[placeholder*='ask' i]", "textarea"),
+        ("textarea", "textarea"),
+        ("[contenteditable='true'][role='textbox']", "contenteditable"),
+        ("[contenteditable='true']", "contenteditable"),
+    ]
+    for selector, kind in selectors:
+        locator = page.locator(selector)
+        count = min(locator.count(), 12)
+        for index in range(count):
+            candidate = locator.nth(index)
+            try:
+                if not candidate.is_visible(timeout=400):
+                    continue
+                box = candidate.bounding_box()
+                if box and box.get("width", 0) < 60:
+                    continue
+                return candidate, kind, selector
+            except Exception:
+                continue
+    raise RuntimeError("Unable to find a visible Perplexity / Comet prompt input.")
+
+
+def set_perplexity_prompt_text(page, prompt_text: str):
+    composer, kind, selector = find_perplexity_composer(page)
+    prompt_text = prompt_text or ""
+    try:
+        composer.evaluate(
+            """node => {
+                if (node && node.scrollIntoView) {
+                    node.scrollIntoView({ block: "center", inline: "nearest" });
+                }
+                if (node && node.focus) {
+                    node.focus();
+                }
+            }"""
+        )
+    except Exception:
+        pass
+
+    if kind == "textarea":
+        try:
+            composer.click(timeout=5000, force=True)
+        except Exception:
+            pass
+        try:
+            composer.fill("", timeout=5000)
+        except Exception:
+            pass
+        composer.fill(prompt_text, timeout=15000)
+    else:
+        composer.evaluate(
+            """(node, value) => {
+                const text = value || "";
+                node.focus();
+                if ("value" in node) {
+                    node.value = text;
+                } else {
+                    node.innerHTML = "";
+                    node.textContent = text;
+                }
+                node.dispatchEvent(new InputEvent("input", { bubbles: true, data: text, inputType: "insertText" }));
+                node.dispatchEvent(new Event("change", { bubbles: true }));
+            }""",
+            prompt_text,
+        )
+    return composer, kind, selector
+
+
+def perplexity_send_prompt(page, composer, composer_kind: str) -> str:
+    button_selectors = [
+        "button[aria-label*='submit' i]",
+        "button[aria-label*='send' i]",
+        "button[aria-label*='ask' i]",
+        "button[data-testid*='submit' i]",
+        "button[data-testid*='send' i]",
+    ]
+    for selector in button_selectors:
+        locator = page.locator(selector)
+        count = min(locator.count(), 8)
+        for index in range(count):
+            candidate = locator.nth(index)
+            try:
+                if not candidate.is_visible(timeout=300):
+                    continue
+                label = clean_text(
+                    " ".join(
+                        [
+                            candidate.get_attribute("aria-label") or "",
+                            candidate.get_attribute("title") or "",
+                            candidate.inner_text(timeout=400) or "",
+                        ]
+                    )
+                )
+                if label and any(term in label.lower() for term in ["submit", "send", "ask"]):
+                    return safe_click(candidate, timeout=5000, reason="perplexity_send")
+            except Exception:
+                continue
+
+    if composer_kind == "textarea":
+        composer.press("Enter", timeout=3000)
+        return "keyboard_enter"
+
+    page.keyboard.press("Enter")
+    return "keyboard_enter"
+
+
+def extract_perplexity_answer_payload(page, prompt_text: str = "") -> Dict[str, Any]:
+    payload = page.evaluate(
+        """(promptText) => {
+            const clean = value => (value || '')
+                .replace(/\\r/g, '')
+                .replace(/[ \\t]+\\n/g, '\\n')
+                .replace(/\\n{3,}/g, '\\n\\n')
+                .trim();
+            const prompt = clean(promptText || '');
+            const main = document.querySelector('main');
+            const mainText = clean((main && (main.innerText || main.textContent)) || document.body.innerText || '');
+            let answerText = mainText;
+            if (prompt) {
+                const lowerMain = mainText.toLowerCase();
+                const lowerPrompt = prompt.toLowerCase();
+                const index = lowerMain.indexOf(lowerPrompt);
+                if (index >= 0) {
+                    answerText = clean(mainText.slice(index + prompt.length));
+                }
+            }
+
+            const candidates = [];
+            const seen = new Set();
+            const selectors = ['main article', 'main [class*="prose"]', 'main section', 'main div'];
+            for (const selector of selectors) {
+                for (const node of document.querySelectorAll(selector)) {
+                    if (!node || seen.has(node)) {
+                        continue;
+                    }
+                    seen.add(node);
+                    const text = clean(node.innerText || node.textContent || '');
+                    if (!text || text.length < 80) {
+                        continue;
+                    }
+                    candidates.push({
+                        selector,
+                        length: text.length,
+                        text,
+                    });
+                }
+            }
+
+            candidates.sort((left, right) => right.length - left.length);
+            const bestCandidate = candidates.length ? candidates[0] : null;
+            return {
+                title: clean(document.title || ''),
+                url: location.href,
+                main_text: mainText,
+                answer_text: answerText,
+                candidate_text: bestCandidate ? bestCandidate.text : '',
+                candidate_selector: bestCandidate ? bestCandidate.selector : '',
+            };
+        }""",
+        prompt_text,
+    )
+
+    answer_text = clean_text(str(payload.get("answer_text") or ""))
+    candidate_text = clean_text(str(payload.get("candidate_text") or ""))
+    if len(candidate_text) > len(answer_text) and candidate_text not in answer_text:
+        answer_text = candidate_text
+    if not answer_text:
+        answer_text = clean_text(str(payload.get("main_text") or ""))
+
+    prompt_clean = clean_text(prompt_text or "")
+    if prompt_clean and answer_text.lower().startswith(prompt_clean.lower()):
+        answer_text = clean_text(answer_text[len(prompt_clean):])
+    answer_text = re.sub(r"^(show more\s+)?preparing[^A-Za-z0-9\u4e00-\u9fff]*", "", answer_text, flags=re.I).strip()
+    answer_text = re.sub(r"\b\d+\s+Follow-ups\b.*$", "", answer_text, flags=re.I | re.S).strip()
+    answer_text = re.sub(r"\bFollow-ups\b.*$", "", answer_text, flags=re.I | re.S).strip()
+    answer_text = re.sub(r"\bAsk a follow-up\b.*$", "", answer_text, flags=re.I | re.S).strip()
+
+    payload["answer_text"] = answer_text
+    payload["main_text"] = clean_text(str(payload.get("main_text") or ""))
+    payload["title"] = clean_text(str(payload.get("title") or ""))
+    payload["url"] = clean_text(str(payload.get("url") or page.url))
+    return payload
+
+
+def wait_for_perplexity_answer(page, prompt_text: str, timeout_seconds: int = 300, max_total_seconds: int = 0) -> Dict[str, Any]:
+    start = time.time()
+    last_growth = start
+    stable_rounds = 0
+    best_payload: Dict[str, Any] = {"answer_text": "", "main_text": "", "title": "", "url": page.url}
+    best_length = 0
+
+    while True:
+        payload = extract_perplexity_answer_payload(page, prompt_text=prompt_text)
+        current_answer = clean_text(str(payload.get("answer_text") or ""))
+        current_length = len(current_answer)
+        if current_length > best_length + 12:
+            best_payload = payload
+            best_length = current_length
+            last_growth = time.time()
+            stable_rounds = 0
+        elif current_length >= best_length and current_answer == clean_text(str(best_payload.get("answer_text") or "")):
+            stable_rounds += 1
+
+        if best_length >= 120 and stable_rounds >= 4:
+            break
+
+        now = time.time()
+        if max_total_seconds > 0 and (now - start) >= max_total_seconds:
+            if best_length > 0:
+                best_payload["completion_status"] = "partial_max_total_timeout"
+                return best_payload
+            raise RuntimeError(f"Perplexity answer exceeded the max total time of {max_total_seconds} seconds.")
+
+        if (now - last_growth) >= timeout_seconds:
+            if best_length > 0:
+                best_payload["completion_status"] = "partial_stall_timeout"
+                return best_payload
+            raise RuntimeError(f"Perplexity did not start returning a visible answer within {timeout_seconds} seconds.")
+
+        page.wait_for_timeout(800)
+
+    best_payload["completion_status"] = "complete"
+    return best_payload
+
+
+def cmd_perplexity_ask(args) -> Dict[str, Any]:
+    destination_dir = ensure_existing_directory(args.destination_dir, "Perplexity destination directory")
+    run_dir = destination_dir / sanitize(args.result_name or f"perplexity_ask_{time.strftime('%Y%m%d_%H%M%S')}")
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.prompt_file:
+        prompt_text = Path(args.prompt_file).expanduser().resolve().read_text(encoding="utf-8")
+    elif args.prompt_stdin:
+        prompt_text = sys.stdin.read()
+    else:
+        prompt_text = args.prompt or ""
+    prompt_text = prompt_text.strip()
+    if not prompt_text:
+        raise RuntimeError("Prompt text is empty after resolving the requested prompt source.")
+
+    prompt_text_path = run_dir / "user_prompt.txt"
+    write_text(prompt_text_path, prompt_text)
+
+    playwright, browser = connect_browser(args.cdp)
+    try:
+        context = choose_context(browser)
+        page, created = choose_page(context, page_url_contains=args.page_url_contains)
+        try:
+            open_perplexity_target(page, url=args.url)
+            composer, composer_kind, composer_selector = set_perplexity_prompt_text(page, prompt_text)
+            send_method = perplexity_send_prompt(page, composer, composer_kind)
+            answer_payload = wait_for_perplexity_answer(
+                page,
+                prompt_text=prompt_text,
+                timeout_seconds=args.timeout,
+                max_total_seconds=args.max_total_seconds,
+            )
+            answer_text = answer_payload.get("answer_text") or ""
+            answer_text_path = run_dir / "assistant_answer.txt"
+            write_text(answer_text_path, answer_text)
+            html_path = save_html(page, run_dir / "perplexity_result.html")
+            screenshot_path = run_dir / "perplexity_result.png"
+            screenshot_error = ""
+            screenshot_path_value = ""
+            try:
+                page.screenshot(path=str(screenshot_path), full_page=True)
+                screenshot_path_value = str(screenshot_path)
+            except Exception as exc:
+                screenshot_error = f"{type(exc).__name__}: {exc}"
+            prompt_preview, prompt_truncated = compact_text_for_cli(prompt_text)
+            answer_preview, answer_truncated = compact_text_for_cli(answer_text)
+            result = {
+                "status": "ok",
+                "url": answer_payload.get("url") or page.url,
+                "title": answer_payload.get("title") or "",
+                "prompt": prompt_preview,
+                "prompt_path": str(prompt_text_path),
+                "prompt_char_count": len(prompt_text),
+                "prompt_truncated": prompt_truncated,
+                "assistant_text": answer_preview,
+                "assistant_text_path": str(answer_text_path),
+                "assistant_text_char_count": len(answer_text),
+                "assistant_text_truncated": answer_truncated,
+                "output_dir": str(run_dir),
+                "html_path": str(html_path),
+                "screenshot_path": screenshot_path_value,
+                "screenshot_error": screenshot_error,
+                "page_url_contains": args.page_url_contains or "",
+                "composer_kind": composer_kind,
+                "composer_selector": composer_selector,
+                "send_method": send_method,
+                "completion_status": answer_payload.get("completion_status") or "complete",
+                "stall_timeout_seconds": args.timeout,
+                "max_total_seconds": args.max_total_seconds,
+            }
+            result_path = run_dir / "result.json"
+            write_text(result_path, json.dumps(result, indent=2, ensure_ascii=False))
+            result["result_path"] = str(result_path)
+            return result
+        finally:
+            if created:
+                page.close()
+    finally:
+        browser.close()
+        playwright.stop()
+
+
 def cmd_chatgpt_export(args) -> Dict[str, Any]:
     destination_dir = ensure_existing_directory(args.destination_dir, "ChatGPT destination directory")
     fallback_keywords = DEFAULT_STUDY_KEYWORDS if args.default_study_keywords else None
@@ -4434,10 +4749,11 @@ def cmd_batch(args) -> Dict[str, Any]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Authenticated Chromium browser helper for Codex PowerShell tools.")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    chromium_browser_choices = ["edge", "chrome", "chromium", "comet", "opera"]
 
     extension_install = subparsers.add_parser("extension-install")
     extension_install.add_argument("--extensions-root", required=True)
-    extension_install.add_argument("--browser", default="edge", choices=["edge", "chrome"])
+    extension_install.add_argument("--browser", default="edge", choices=chromium_browser_choices)
     extension_install.add_argument("--name")
     extension_install.add_argument("--source-url")
     extension_install.add_argument("--package-path")
@@ -4446,13 +4762,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     extension_runtime_list = subparsers.add_parser("extension-runtime-list")
     extension_runtime_list.add_argument("--cdp", required=True)
-    extension_runtime_list.add_argument("--browser", default="edge", choices=["edge", "chrome"])
+    extension_runtime_list.add_argument("--browser", default="edge", choices=chromium_browser_choices)
     extension_runtime_list.add_argument("--user-data-dir")
     extension_runtime_list.add_argument("--profile-directory", default="Default")
 
     extension_open = subparsers.add_parser("extension-open")
     extension_open.add_argument("--cdp", required=True)
-    extension_open.add_argument("--browser", default="edge", choices=["edge", "chrome"])
+    extension_open.add_argument("--browser", default="edge", choices=chromium_browser_choices)
     extension_open.add_argument("--name")
     extension_open.add_argument("--extension-id")
     extension_open.add_argument("--page-path")
@@ -4462,7 +4778,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     extension_click = subparsers.add_parser("extension-click")
     extension_click.add_argument("--cdp", required=True)
-    extension_click.add_argument("--browser", default="edge", choices=["edge", "chrome"])
+    extension_click.add_argument("--browser", default="edge", choices=chromium_browser_choices)
     extension_click.add_argument("--name")
     extension_click.add_argument("--extension-id")
     extension_click.add_argument("--page-path")
@@ -4566,6 +4882,18 @@ def build_parser() -> argparse.ArgumentParser:
     chatgpt_ask.add_argument("--timeout", type=int, default=300)
     chatgpt_ask.add_argument("--max-total-seconds", type=int, default=0)
 
+    perplexity_ask = subparsers.add_parser("perplexity-ask")
+    perplexity_ask.add_argument("--cdp", required=True)
+    perplexity_ask.add_argument("--url", default="https://www.perplexity.ai/")
+    perplexity_ask.add_argument("--page-url-contains")
+    perplexity_ask.add_argument("--prompt")
+    perplexity_ask.add_argument("--prompt-file")
+    perplexity_ask.add_argument("--prompt-stdin", action="store_true")
+    perplexity_ask.add_argument("--destination-dir", required=True)
+    perplexity_ask.add_argument("--result-name")
+    perplexity_ask.add_argument("--timeout", type=int, default=300)
+    perplexity_ask.add_argument("--max-total-seconds", type=int, default=0)
+
     batch = subparsers.add_parser("batch")
     batch.add_argument("--cdp", required=True)
     batch.add_argument("--spec", required=True)
@@ -4608,6 +4936,8 @@ def main() -> int:
             result = cmd_chatgpt_ask(args)
         elif args.command == "chatgpt-export":
             result = cmd_chatgpt_export(args)
+        elif args.command == "perplexity-ask":
+            result = cmd_perplexity_ask(args)
         elif args.command == "batch":
             result = cmd_batch(args)
         else:

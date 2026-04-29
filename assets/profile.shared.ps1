@@ -630,7 +630,10 @@ function Update-CodexPowerShellMetadata {
         (Get-ResolvedCommandSummary -Name 'phone-ui-dump'),
         (Get-ResolvedCommandSummary -Name 'phone-mirror'),
         (Get-ResolvedCommandSummary -Name 'auth-browser'),
+        (Get-ResolvedCommandSummary -Name 'auth-browser-list'),
+        (Get-ResolvedCommandSummary -Name 'auth-comet-browser'),
         (Get-ResolvedCommandSummary -Name 'auth-recover'),
+        (Get-ResolvedCommandSummary -Name 'auth-perplexity-ask'),
         (Get-ResolvedCommandSummary -Name 'auth-extension-list'),
         (Get-ResolvedCommandSummary -Name 'git'),
         (Get-ResolvedCommandSummary -Name 'rg')
@@ -642,10 +645,10 @@ function Update-CodexPowerShellMetadata {
         'json', 'yaml', 'grepcode', 'proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear',
         'remote-client-init', 'remote-server-bundle', 'remote-health', 'vps-provider-show', 'vps-plan-suggest', 'vps-bundle-new', 'ss-source-show', 'ss-secret-discover', 'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-client-info', 'ss-client-sync', 'ss-server-bundle',
         'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline', 'doc-scan',
-        'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'study-summary', 'study-pack', 'auth-browser', 'auth-links', 'auth-spec',
+        'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'study-summary', 'study-pack', 'auth-browser', 'auth-browser-list', 'auth-comet-browser', 'auth-links', 'auth-spec',
         'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-recover', 'auth-chatgpt-browser', 'auth-chatgpt-dump', 'auth-chatgpt-export',
         'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save',
-        'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-extension-install', 'auth-extension-list',
+        'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-perplexity-ask', 'auth-extension-install', 'auth-extension-list',
         'auth-extension-enable', 'auth-extension-disable', 'auth-extension-open', 'auth-extension-click',
         'auth-extension-remove', 'auth-help'
     )
@@ -750,6 +753,8 @@ function Show-CodexShellHints {
             Title = 'Web Auth'
             Entries = @(
                 (Get-CodexHintEntry -Name 'auth-browser' -Description 'launch browser automation session'),
+                (Get-CodexHintEntry -Name 'auth-browser-list' -Description 'show detected browser roots and CDP compatibility' -Example 'auth-browser-list'),
+                (Get-CodexHintEntry -Name 'auth-comet-browser' -Description 'launch a managed Comet session using your Comet cookies' -Example 'auth-comet-browser -Url https://moodle.ucl.ac.uk/my/'),
                 (Get-CodexHintEntry -Name 'auth-spec' -Description 'build a download spec file'),
                 (Get-CodexHintEntry -Name 'auth-save' -Description 'save authenticated page content'),
                 (Get-CodexHintEntry -Name 'auth-batch' -Description 'batch-download authenticated assets'),
@@ -757,6 +762,7 @@ function Show-CodexShellHints {
                 (Get-CodexHintEntry -Name 'auth-chatgpt-browser' -Description 'open the dedicated ChatGPT automation browser'),
                 (Get-CodexHintEntry -Name 'auth-chatgpt-list' -Description 'list ChatGPT conversations' -Example 'auth-chatgpt-list -Limit 20'),
                 (Get-CodexHintEntry -Name 'auth-chatgpt-ask' -Description 'send a prompt and save the result; prompt can be positional, pipeline, or -PromptPath' -Example 'auth-chatgpt-ask -NewChat -DestinationDir C:\Exports "Summarize Newton''s laws."'),
+                (Get-CodexHintEntry -Name 'auth-perplexity-ask' -Description 'ask Perplexity through Comet or another Chromium-family browser and save the answer bundle' -Example 'auth-perplexity-ask -Browser comet -DestinationDir C:\Exports "Summarize the key points."'),
                 (Get-CodexHintEntry -Name 'auth-extension-install' -Description 'install an unpacked/zip/CRX browser extension into the managed toolkit state' -Example 'auth-extension-install -DirectoryPath C:\Ext\MyExtension -Name MyExtension'),
                 (Get-CodexHintEntry -Name 'auth-extension-open' -Description 'open an installed extension popup/options page inside the managed browser' -Example 'auth-extension-open -Name MyExtension -Surface popup'),
                 (Get-CodexHintEntry -Name 'auth-extension-click' -Description 'click a control inside an installed extension page' -Example 'auth-extension-click -Name MyExtension -Surface popup -TextContains "Sign in"'),
@@ -790,7 +796,7 @@ function Show-CodexStartupBanner {
         "predict=$($env:CODEX_READLINE_MODE)",
         "nav=$($env:CODEX_NAV_MODE)",
         'toolbelt: rg fd fzf jq yq eza z lazygit just hyperfine 7z xh mise dust procs',
-        'docs: ocr-smart pdf-smart translate-smart doc-pipeline study-summary study-pack auth-browser auth-recover auth-chatgpt-ask auth-extension-open',
+        'docs: ocr-smart pdf-smart translate-smart doc-pipeline study-summary study-pack auth-browser auth-browser-list auth-comet-browser auth-recover auth-chatgpt-ask auth-perplexity-ask auth-extension-open',
         'mobile: adb phone-status phone-diag phone-ui-dump phone-storage-scan phone-mirror phone-shizuku-start',
         'remote: remote-client-init remote-server-bundle remote-health vps-plan-suggest vps-bundle-new ss-client-sync',
         'hint: codehint'
@@ -812,7 +818,7 @@ function whichall {
     [CmdletBinding()]
     param(
         [Parameter(Position = 0, ValueFromRemainingArguments = $true)]
-        [string[]]$Name = @('codehint', 'toolkit-inventory', 'codex', 'curl', 'wget', 'capture2text', 'adb', 'scrcpy', 'rg', 'git', 'gh', 'node', 'python', 'fd', 'fzf', 'jq', 'yq', 'uv', 'pnpm', 'bat', 'delta', 'eza', 'zoxide', 'starship', 'lazygit', 'just', 'hyperfine', '7z', 'sd', 'xh', 'mise', 'dust', 'procs', 'nougat', 'ocrmypdf', 'pdftotext', 'pdftoppm', 'mutool', 'tesseract', 'Capture2Text_CLI', 'ollama', 'llava', 'easyocr-read', 'paddleocr-read', 'donut-ocr', 'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline', 'doc-scan', 'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'study-summary', 'study-pack', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'lg', 'j', 'bench', 'phone-help', 'phone-status', 'phone-diag', 'phone-noise-audit', 'phone-storage-scan', 'phone-ui-dump', 'phone-pull', 'phone-archive', 'phone-mirror', 'phone-shizuku-start', 'phone-apk-list', 'phone-apk-import', 'phone-apk-install', 'json', 'yaml', 'grepcode', 'proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear', 'remote-client-init', 'remote-server-bundle', 'remote-health', 'vps-provider-show', 'vps-plan-suggest', 'vps-bundle-new', 'ss-source-show', 'ss-secret-discover', 'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-client-info', 'ss-client-sync', 'ss-server-bundle', 'auth-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-recover', 'auth-moodle-spec', 'auth-sharepoint-spec', 'auth-panopto-spec', 'auth-moodle-dump', 'auth-sharepoint-dump', 'auth-panopto-dump', 'auth-chatgpt-browser', 'auth-chatgpt-dump', 'auth-chatgpt-export', 'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-extension-install', 'auth-extension-list', 'auth-extension-enable', 'auth-extension-disable', 'auth-extension-open', 'auth-extension-click', 'auth-extension-remove', 'auth-help')
+        [string[]]$Name = @('codehint', 'toolkit-inventory', 'codex', 'curl', 'wget', 'capture2text', 'adb', 'scrcpy', 'rg', 'git', 'gh', 'node', 'python', 'fd', 'fzf', 'jq', 'yq', 'uv', 'pnpm', 'bat', 'delta', 'eza', 'zoxide', 'starship', 'lazygit', 'just', 'hyperfine', '7z', 'sd', 'xh', 'mise', 'dust', 'procs', 'nougat', 'ocrmypdf', 'pdftotext', 'pdftoppm', 'mutool', 'tesseract', 'Capture2Text_CLI', 'ollama', 'llava', 'easyocr-read', 'paddleocr-read', 'donut-ocr', 'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline', 'doc-scan', 'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'study-summary', 'study-pack', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'lg', 'j', 'bench', 'phone-help', 'phone-status', 'phone-diag', 'phone-noise-audit', 'phone-storage-scan', 'phone-ui-dump', 'phone-pull', 'phone-archive', 'phone-mirror', 'phone-shizuku-start', 'phone-apk-list', 'phone-apk-import', 'phone-apk-install', 'json', 'yaml', 'grepcode', 'proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear', 'remote-client-init', 'remote-server-bundle', 'remote-health', 'vps-provider-show', 'vps-plan-suggest', 'vps-bundle-new', 'ss-source-show', 'ss-secret-discover', 'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-client-info', 'ss-client-sync', 'ss-server-bundle', 'auth-browser', 'auth-browser-list', 'auth-comet-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-recover', 'auth-moodle-spec', 'auth-sharepoint-spec', 'auth-panopto-spec', 'auth-moodle-dump', 'auth-sharepoint-dump', 'auth-panopto-dump', 'auth-chatgpt-browser', 'auth-chatgpt-dump', 'auth-chatgpt-export', 'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-perplexity-ask', 'auth-extension-install', 'auth-extension-list', 'auth-extension-enable', 'auth-extension-disable', 'auth-extension-open', 'auth-extension-click', 'auth-extension-remove', 'auth-help')
     )
 
     foreach ($query in $Name) {
@@ -865,7 +871,7 @@ function Show-CodexToolkitInventory {
         }
         @{
             Title = 'Web Auth'
-            Names = @('auth-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-recover', 'auth-chatgpt-browser', 'auth-chatgpt-dump', 'auth-chatgpt-export', 'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-extension-install', 'auth-extension-list', 'auth-extension-enable', 'auth-extension-disable', 'auth-extension-open', 'auth-extension-click', 'auth-extension-remove', 'auth-help')
+            Names = @('auth-browser', 'auth-browser-list', 'auth-comet-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-recover', 'auth-chatgpt-browser', 'auth-chatgpt-dump', 'auth-chatgpt-export', 'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-perplexity-ask', 'auth-extension-install', 'auth-extension-list', 'auth-extension-enable', 'auth-extension-disable', 'auth-extension-open', 'auth-extension-click', 'auth-extension-remove', 'auth-help')
         }
     )
 

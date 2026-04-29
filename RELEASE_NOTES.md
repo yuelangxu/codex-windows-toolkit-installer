@@ -1,5 +1,21 @@
 # Release Notes
 
+## v1.6.0
+
+Multi-browser auth automation, including Comet-aware PowerShell flows.
+
+### Highlights
+
+- Added explicit browser selection support across the Chromium-family auth helpers so commands can target `edge`, `chrome`, `chromium`, `comet`, or `opera` instead of assuming Edge
+- Added `auth-browser-list` to surface detected browser roots, user-data locations, and whether each browser is currently CDP-compatible for toolkit automation
+- Added `auth-comet-browser` so the managed browser bootstrap flow can reuse existing Comet cookies and sessions for sites like Moodle or SharePoint
+- Added `auth-perplexity-ask` so PowerShell can send prompts through Perplexity in Comet and save a local result bundle
+- Documented the current boundary clearly: Firefox is inventoried, but live automation remains Chromium-first until a separate Firefox control path exists
+
+### Why this release matters
+
+The web-auth stack now follows the real browser state on the machine instead of forcing everything through Edge. That removes a common source of friction for AI agents and makes authenticated browser automation far more reusable when the active cookies live in Comet or another Chromium profile.
+
 ## v1.5.0
 
 Android phone-debugging toolkit integration.

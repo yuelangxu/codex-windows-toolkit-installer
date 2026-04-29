@@ -246,10 +246,10 @@ function Get-ToolkitInventoryCommandNames {
         'remote-client-init', 'remote-server-bundle', 'remote-health', 'vps-provider-show', 'vps-plan-suggest', 'vps-bundle-new', 'ss-source-show', 'ss-secret-discover',
         'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-client-info', 'ss-client-sync',
         'ss-server-bundle', 'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline',
-        'doc-scan', 'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'auth-browser', 'auth-links',
+        'doc-scan', 'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'auth-browser', 'auth-browser-list', 'auth-comet-browser', 'auth-links',
         'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-chatgpt-browser', 'auth-chatgpt-dump',
         'auth-chatgpt-export', 'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open',
-        'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-extension-install', 'auth-extension-list',
+        'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-perplexity-ask', 'auth-extension-install', 'auth-extension-list',
         'auth-extension-enable', 'auth-extension-disable', 'auth-extension-open', 'auth-extension-click',
         'auth-extension-remove', 'auth-help', 'easyocr-read',
         'paddleocr-read', 'donut-ocr', 'llava', 'nougat', 'ocrmypdf'
