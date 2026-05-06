@@ -32,7 +32,19 @@ function Write-ManagedFile {
         }
     }
 
-    Set-Content -LiteralPath $Path -Value $Content -Encoding UTF8
+    $maxAttempts = 5
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        try {
+            Set-Content -LiteralPath $Path -Value $Content -Encoding UTF8
+            return
+        } catch {
+            if ($attempt -ge $maxAttempts) {
+                throw
+            }
+
+            Start-Sleep -Milliseconds (250 * $attempt)
+        }
+    }
 }
 
 function Copy-ManagedDirectory {
@@ -177,7 +189,7 @@ if ($IncludeProfileIntegration) {
     Ensure-Directory -Path $context.PowerShellRoot
     Ensure-Directory -Path $context.PowerShellScriptsRoot
 
-    foreach ($profileAsset in @('codex.phone-tools.ps1', 'codex.document-tools.ps1', 'codex.ocr-translate-tools.ps1', 'codex.web-auth-tools.ps1', 'codex.network-tools.ps1', 'codex.office-typesetting-tools.ps1')) {
+    foreach ($profileAsset in @('codex.phone-tools.ps1', 'codex.document-tools.ps1', 'codex.ocr-translate-tools.ps1', 'codex.web-auth-tools.ps1', 'codex.network-tools.ps1', 'codex.office-typesetting-tools.ps1', 'codex.ollama-tools.ps1')) {
         $profileContent = Get-Content -LiteralPath (Join-Path $script:AssetsRoot $profileAsset) -Raw
         Write-ManagedFile -Path (Join-Path $context.PowerShellRoot $profileAsset) -Content $profileContent
     }
@@ -230,6 +242,12 @@ set "PATH=$($context.ToolkitTorchLib);%PATH%"
 set "PYTHONIOENCODING=utf-8"
 set "PATH=$($context.ToolkitTorchLib);%PATH%"
 "$($context.ToolkitVenvPython)" "$($context.ToolkitScripts)\donut_ocr.py" %*
+"@
+    'nougat.cmd' = @"
+@echo off
+set "PYTHONIOENCODING=utf-8"
+set "PATH=$($context.ToolkitTorchLib);%PATH%"
+"$($context.ToolkitVenv)\Scripts\nougat.exe" %*
 "@
     'llava.cmd' = @"
 @echo off

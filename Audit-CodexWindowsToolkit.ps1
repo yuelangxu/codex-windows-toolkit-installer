@@ -160,7 +160,7 @@ function Get-Audit {
         Detail = if ($missingScripts.Count -eq 0) { $context.ToolkitScripts } else { 'Missing: ' + [string]::Join(', ', $missingScripts) }
     })
 
-    $wrappers = @('easyocr-read.cmd', 'paddleocr-read.cmd', 'donut-ocr.cmd', 'llava.cmd', 'ocr-smart.cmd', 'pdf-smart.cmd', 'ocr-models.cmd')
+    $wrappers = @('easyocr-read.cmd', 'paddleocr-read.cmd', 'donut-ocr.cmd', 'nougat.cmd', 'llava.cmd', 'ocr-smart.cmd', 'pdf-smart.cmd', 'ocr-models.cmd')
     $missingWrappers = @($wrappers | Where-Object { -not (Test-Path -LiteralPath (Join-Path $context.ToolkitBin $_)) })
     [void]$audit.Add([pscustomobject]@{
         Component = 'Toolkit wrapper commands'

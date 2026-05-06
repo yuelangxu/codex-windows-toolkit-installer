@@ -1,4 +1,5 @@
-if ((Get-Variable -Name CodexOfficeTypesettingToolsLoaded -Scope Global -ErrorAction SilentlyContinue) -and $global:CodexOfficeTypesettingToolsLoaded) {
+${existingCodexOfficeTypesettingToolsLoaded} = Get-Variable -Name CodexOfficeTypesettingToolsLoaded -Scope Global -ErrorAction SilentlyContinue
+if ($null -ne ${existingCodexOfficeTypesettingToolsLoaded} -and ${existingCodexOfficeTypesettingToolsLoaded}.Value) {
     return
 }
 

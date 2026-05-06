@@ -1,5 +1,19 @@
 # Release Notes
 
+## v1.7.0
+
+Office typesetting + Ollama helper consolidation.
+
+### Highlights
+
+- Merged the office-typesetting toolkit branch into `main`, bringing Typst, MiKTeX, Pandoc, Marp, LibreOffice, Inkscape, draw.io, Scribus, SumatraPDF, and related helper commands into the primary installer flow
+- Added `codex.ollama-tools.ps1` to the managed PowerShell profile so `ollama` demand-starts the local server instead of failing when the background service is not already awake
+- Expanded inventory and hint coverage so `nougat`, `auth-moodle-*`, `auth-sharepoint-*`, `auth-panopto-*`, `ollama`, and `llava` are all visible to fresh installs and other AI agents
+
+### Why this release matters
+
+The GitHub installer now reflects two important realities of the live workstation: Office/TeX authoring is a first-class toolkit scenario, and local model helpers need to be discoverable and resilient. This closes the gap between the repo and the machine that had accumulated extra PowerShell helpers outside `main`.
+
 ## v1.6.0
 
 Multi-browser auth automation, including Comet-aware PowerShell flows.
