@@ -32,6 +32,30 @@ function Get-Audit {
         })
     }
 
+    if ($script:Manifest.ContainsKey('OfficeTypesettingWingetPackages')) {
+        foreach ($package in $script:Manifest.OfficeTypesettingWingetPackages) {
+            $state = Get-PackageState -Package $package
+            [void]$audit.Add([pscustomobject]@{
+                Component = "Office typesetting tool: $($package.DisplayName)"
+                Category = $package.Category
+                Status = if ($state.Installed) { 'Installed' } else { 'Missing' }
+                Detail = $state.Detail
+            })
+        }
+    }
+
+    if ($script:Manifest.ContainsKey('OfficeTypesettingNpmGlobalPackages')) {
+        foreach ($package in $script:Manifest.OfficeTypesettingNpmGlobalPackages) {
+            $missingCommands = @($package.Commands | Where-Object { -not (Test-CommandAvailable -Name $_) })
+            [void]$audit.Add([pscustomobject]@{
+                Component = "Office typesetting npm tool: $($package.DisplayName)"
+                Category = 'OfficeTypesetting'
+                Status = if ($missingCommands.Count -eq 0) { 'Installed' } else { 'Missing' }
+                Detail = if ($missingCommands.Count -eq 0) { [string]::Join(', ', $package.Commands) } else { 'Missing: ' + [string]::Join(', ', $missingCommands) }
+            })
+        }
+    }
+
     foreach ($module in $script:Manifest.PowerShellModules) {
         $state = Get-PowerShellModuleState -Module $module
         [void]$audit.Add([pscustomobject]@{
@@ -101,7 +125,8 @@ function Get-Audit {
             (Join-Path $context.PowerShellRoot 'codex.document-tools.ps1'),
             (Join-Path $context.PowerShellRoot 'codex.ocr-translate-tools.ps1'),
             (Join-Path $context.PowerShellRoot 'codex.web-auth-tools.ps1'),
-            (Join-Path $context.PowerShellRoot 'codex.network-tools.ps1')
+            (Join-Path $context.PowerShellRoot 'codex.network-tools.ps1'),
+            (Join-Path $context.PowerShellRoot 'codex.office-typesetting-tools.ps1')
         )
         $missingHelperProfiles = @($helperProfiles | Where-Object { -not (Test-Path -LiteralPath $_) })
         [void]$audit.Add([pscustomobject]@{
@@ -171,6 +196,13 @@ function Get-Audit {
         Category = 'Toolkit'
         Status = if (Test-Path -LiteralPath $context.ToolkitWebAuthGuidePath) { 'Installed' } else { 'Missing' }
         Detail = $context.ToolkitWebAuthGuidePath
+    })
+
+    [void]$audit.Add([pscustomobject]@{
+        Component = 'Office typesetting toolkit guide'
+        Category = 'Toolkit'
+        Status = if (Test-Path -LiteralPath $context.ToolkitOfficeTypesettingGuidePath) { 'Installed' } else { 'Missing' }
+        Detail = $context.ToolkitOfficeTypesettingGuidePath
     })
 
     [void]$audit.Add([pscustomobject]@{

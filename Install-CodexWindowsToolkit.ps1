@@ -7,6 +7,7 @@ param(
     [switch]$IncludeLlavaModel,
     [switch]$SkipLlavaModel,
     [switch]$IncludeOptionalPackages,
+    [switch]$IncludeOfficeTypesettingTools,
     [switch]$IncludeProfileIntegration,
     [switch]$DisableProfileIntegration,
     [switch]$ForceOcrRepair,
@@ -28,6 +29,7 @@ Write-Note ("Toolkit root: {0}" -f $context.ToolkitRoot)
 Write-Note ("Install scope preference: {0}" -f $InstallScope)
 Write-Note ("PowerShell profile integration: {0}" -f $(if ($useProfileIntegration) { 'enabled (default)' } else { 'disabled' }))
 Write-Note ("Recommended extra CLI tools: {0}" -f $(if ($IncludeOptionalPackages) { 'enabled' } else { 'disabled' }))
+Write-Note ("Office typesetting tools: {0}" -f $(if ($IncludeOfficeTypesettingTools) { 'enabled' } else { 'disabled' }))
 Write-Note ("ChatGPT/browser-extension automation: {0}" -f $(if ($useProfileIntegration) { 'will be deployed with proactive web-auth dependency setup' } else { 'available in source, but profile integration is disabled' }))
 Write-Note ("Android / phone debugging toolkit: {0}" -f $(if ($useProfileIntegration) { 'ADB helpers, diagnostics, UI dump, Shizuku, APK staging, and scrcpy support' } else { 'available in source, but profile integration is disabled' }))
 Write-Note ("Remote/network toolkit: {0}" -f $(if ($useProfileIntegration) { 'will be deployed with SSH, proxy, and Shadowsocks helpers' } else { 'available in source, but profile integration is disabled' }))
@@ -44,6 +46,7 @@ $wingetScript = Join-Path $script:InstallerRoot 'Install-CodexWingetPackages.ps1
 $moduleScript = Join-Path $script:InstallerRoot 'Install-CodexPowerShellModules.ps1'
 $profilesScript = Join-Path $script:InstallerRoot 'Install-CodexProfilesAndWrappers.ps1'
 $ocrScript = Join-Path $script:InstallerRoot 'Install-CodexOcrEnvironment.ps1'
+$officeTypesettingScript = Join-Path $script:InstallerRoot 'Install-CodexOfficeTypesettingTools.ps1'
 
 & $auditScript -ToolkitRoot $context.ToolkitRoot -IncludeProfileIntegration:$useProfileIntegration
 
@@ -65,6 +68,9 @@ if (-not $shouldProceed) {
 }
 
 & $wingetScript -InstallScope $InstallScope -IncludeOptionalPackages:$IncludeOptionalPackages
+if ($IncludeOfficeTypesettingTools) {
+    & $officeTypesettingScript -ToolkitRoot $context.ToolkitRoot -InstallScope $InstallScope
+}
 & $moduleScript
 & $profilesScript -ToolkitRoot $context.ToolkitRoot -IncludeProfileIntegration:$useProfileIntegration
 
