@@ -1,5 +1,21 @@
 # Release Notes
 
+## v1.8.0
+
+PowerPoint automation, course-pack generation, and free add-in auto-load.
+
+### Highlights
+
+- Added `codex.powerpoint-tools.ps1` with first-class `ppt-*` commands for deck creation, slide sizing, shape drawing, image placement, gradients, glow, exports, JSON-driven slide specs, and add-in management
+- Added `coursepack-init` and `coursepack-build` so Markdown + Typst source can emit `PPTX + editable PPTX + slide PDF + printable handout PDF` in one flow
+- Hardened PowerPoint COM automation with retry logic for `RPC_E_CALL_REJECTED`, which makes add-in registration and scripted deck generation much more stable
+- Fixed the long-standing IguanaTex auto-load problem by writing durable PowerPoint add-in registration instead of relying on manual `.ppam` opening
+- Expanded the office installer to register additional free PowerPoint add-ins: BrightSlide, Instrumenta, THOR, and Power Up Kit
+
+### Why this release matters
+
+The Office layer is no longer just “extra tools installed on the side”. It is now a real automation surface for AI agents: generate decks, style shapes, export artifacts, scaffold teaching packs, and keep free PowerPoint add-ins alive across launches without hand-fixing PowerPoint every session.
+
 ## v1.7.0
 
 Office typesetting + Ollama helper consolidation.

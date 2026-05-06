@@ -189,7 +189,7 @@ if ($IncludeProfileIntegration) {
     Ensure-Directory -Path $context.PowerShellRoot
     Ensure-Directory -Path $context.PowerShellScriptsRoot
 
-    foreach ($profileAsset in @('codex.phone-tools.ps1', 'codex.document-tools.ps1', 'codex.ocr-translate-tools.ps1', 'codex.web-auth-tools.ps1', 'codex.network-tools.ps1', 'codex.office-typesetting-tools.ps1', 'codex.ollama-tools.ps1')) {
+    foreach ($profileAsset in @('codex.phone-tools.ps1', 'codex.document-tools.ps1', 'codex.ocr-translate-tools.ps1', 'codex.web-auth-tools.ps1', 'codex.network-tools.ps1', 'codex.office-typesetting-tools.ps1', 'codex.powerpoint-tools.ps1', 'codex.ollama-tools.ps1')) {
         $profileContent = Get-Content -LiteralPath (Join-Path $script:AssetsRoot $profileAsset) -Raw
         Write-ManagedFile -Path (Join-Path $context.PowerShellRoot $profileAsset) -Content $profileContent
     }

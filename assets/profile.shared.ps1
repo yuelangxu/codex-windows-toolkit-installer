@@ -539,6 +539,11 @@ if (Test-Path -LiteralPath $codexOfficeTypesettingProfile) {
     . $codexOfficeTypesettingProfile
 }
 
+$codexPowerPointToolsProfile = Join-Path $codexProfileRoot 'codex.powerpoint-tools.ps1'
+if (Test-Path -LiteralPath $codexPowerPointToolsProfile) {
+    . $codexPowerPointToolsProfile
+}
+
 $codexOllamaProfile = Join-Path $codexProfileRoot 'codex.ollama-tools.ps1'
 if (Test-Path -LiteralPath $codexOllamaProfile) {
     . $codexOllamaProfile
@@ -652,6 +657,10 @@ function Update-CodexPowerShellMetadata {
         (Get-ResolvedCommandSummary -Name 'phone-ui-dump'),
         (Get-ResolvedCommandSummary -Name 'phone-mirror'),
         (Get-ResolvedCommandSummary -Name 'office-tools'),
+        (Get-ResolvedCommandSummary -Name 'coursepack-init'),
+        (Get-ResolvedCommandSummary -Name 'coursepack-build'),
+        (Get-ResolvedCommandSummary -Name 'ppt-new'),
+        (Get-ResolvedCommandSummary -Name 'ppt-spec'),
         (Get-ResolvedCommandSummary -Name 'typst-pdf'),
         (Get-ResolvedCommandSummary -Name 'marp-pptx'),
         (Get-ResolvedCommandSummary -Name 'tex-xe'),
@@ -670,7 +679,8 @@ function Update-CodexPowerShellMetadata {
         'json', 'yaml', 'grepcode', 'proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear',
         'remote-client-init', 'remote-server-bundle', 'remote-health', 'vps-provider-show', 'vps-plan-suggest', 'vps-bundle-new', 'ss-source-show', 'ss-secret-discover', 'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-client-info', 'ss-client-sync', 'ss-server-bundle',
         'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline', 'doc-scan',
-        'office-tools', 'office-tool-paths', 'office-samples', 'typst-pdf', 'tex-xe', 'marp-deck', 'marp-pptx', 'marp-pdf', 'marp-pptx-editable',
+        'office-tools', 'office-tool-paths', 'office-samples', 'coursepack-init', 'coursepack-build', 'typst-pdf', 'tex-xe', 'marp-deck', 'marp-pptx', 'marp-pdf', 'marp-pptx-editable',
+        'ppt-new', 'ppt-slide-size', 'ppt-add-slide', 'ppt-add-shape', 'ppt-add-textbox', 'ppt-add-image', 'ppt-style-shape', 'ppt-arrange', 'ppt-shapes', 'ppt-remove-bg', 'ppt-export', 'ppt-spec', 'ppt-addin-list', 'ppt-addin-install', 'ppt-addin-register',
         'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'auth-browser', 'auth-browser-list', 'auth-comet-browser', 'auth-links', 'auth-spec',
         'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-chatgpt-browser', 'auth-chatgpt-dump', 'auth-chatgpt-export',
         'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save',
@@ -785,12 +795,23 @@ function Show-CodexShellHints {
             Entries = @(
                 (Get-CodexHintEntry -Name 'office-tools' -Description 'show registered Office/TeX/diagram tool paths'),
                 (Get-CodexHintEntry -Name 'office-tool-paths' -Description 'filter registered tool paths' -Example 'office-tool-paths latex marp'),
+                (Get-CodexHintEntry -Name 'coursepack-init' -Description 'scaffold a Markdown + Typst teaching pack project' -Example 'coursepack-init .\week05 -Title "Quantum Tunneling" -Subtitle "Week 5"'),
+                (Get-CodexHintEntry -Name 'coursepack-build' -Description 'build PPTX + editable PPTX + slide PDF + handout PDF in one run' -Example 'coursepack-build .\week05 -OpenOutput'),
                 (Get-CodexHintEntry -Name 'typst-pdf' -Description 'compile a Typst worksheet or exam to PDF' -Example 'typst-pdf .\exam.typ .\exam.pdf'),
                 (Get-CodexHintEntry -Name 'tex-xe' -Description 'compile Chinese LaTeX through XeLaTeX' -Example 'tex-xe .\exam-cn.tex'),
                 (Get-CodexHintEntry -Name 'marp-pptx' -Description 'convert Markdown lesson slides to PPTX' -Example 'marp-pptx .\lesson.md .\lesson.pptx'),
                 (Get-CodexHintEntry -Name 'marp-pdf' -Description 'convert Markdown lesson slides to PDF' -Example 'marp-pdf .\lesson.md .\lesson.pdf'),
                 (Get-CodexHintEntry -Name 'marp-pptx-editable' -Description 'convert Markdown to experimental editable PPTX'),
-                (Get-CodexHintEntry -Name 'office-samples' -Description 'rebuild local OfficeTypesettingTools samples')
+                (Get-CodexHintEntry -Name 'office-samples' -Description 'rebuild local OfficeTypesettingTools samples'),
+                (Get-CodexHintEntry -Name 'ppt-new' -Description 'create a new PowerPoint deck with explicit slide size' -Example 'ppt-new .\lesson.pptx -Width 13.333 -Height 7.5 -Unit in'),
+                (Get-CodexHintEntry -Name 'ppt-add-shape' -Description 'draw a shape on a slide with PowerPoint COM' -Example 'ppt-add-shape .\lesson.pptx -SlideIndex 1 -ShapeType roundedRect -Left 0.8 -Top 1.2 -Width 3.5 -Height 1.1 -FillColor #143B6B -FillColor2 #5DA9E9 -Gradient'),
+                (Get-CodexHintEntry -Name 'ppt-add-image' -Description 'insert and place an image on a slide' -Example 'ppt-add-image .\lesson.pptx -SlideIndex 1 -ImagePath .\hero.png -Left 7.8 -Top 1.1 -Width 4.0 -Height 3.0'),
+                (Get-CodexHintEntry -Name 'ppt-style-shape' -Description 'restyle a named shape with fills, lines, text, glow, and rotation' -Example 'ppt-style-shape .\lesson.pptx -SlideIndex 1 -ShapeName TitleBox -FillColor #0E223A -FontColor #FFFFFF -FontSize 28 -Bold'),
+                (Get-CodexHintEntry -Name 'ppt-arrange' -Description 'align, distribute, group, or reorder multiple shapes' -Example 'ppt-arrange .\lesson.pptx -SlideIndex 1 -Action align-left -ShapeName Card1,Card2,Card3'),
+                (Get-CodexHintEntry -Name 'ppt-export' -Description 'export a deck to PDF or per-slide PNG/JPG' -Example 'ppt-export .\lesson.pptx -Format pdf'),
+                (Get-CodexHintEntry -Name 'ppt-spec' -Description 'build a whole deck from a JSON slide spec' -Example 'ppt-spec .\deck-spec.json'),
+                (Get-CodexHintEntry -Name 'ppt-addin-list' -Description 'list installed PowerPoint add-ins and autoload state'),
+                (Get-CodexHintEntry -Name 'ppt-addin-install' -Description 'download or copy a .ppam add-in and register it for autoload' -Example 'ppt-addin-install https://example.com/plugin.ppam')
             )
         },
         @{
@@ -841,7 +862,7 @@ function Show-CodexStartupBanner {
         'toolbelt: rg fd fzf jq yq eza z lazygit just hyperfine 7z xh mise dust procs',
         'docs: ocr-smart pdf-smart translate-smart doc-pipeline auth-browser auth-browser-list auth-comet-browser auth-chatgpt-ask auth-perplexity-ask auth-extension-open',
         'mobile: adb phone-status phone-diag phone-ui-dump phone-storage-scan phone-mirror phone-shizuku-start',
-        'office: office-tools typst-pdf marp-pptx marp-pdf tex-xe',
+        'office: office-tools coursepack-init coursepack-build ppt-new ppt-spec marp-pptx marp-pdf tex-xe',
         'remote: remote-client-init remote-server-bundle remote-health vps-plan-suggest vps-bundle-new ss-client-sync',
         'hint: codehint'
     )
@@ -857,7 +878,7 @@ function whichall {
     [CmdletBinding()]
     param(
         [Parameter(Position = 0, ValueFromRemainingArguments = $true)]
-        [string[]]$Name = @('codehint', 'toolkit-inventory', 'codex', 'curl', 'wget', 'capture2text', 'adb', 'scrcpy', 'rg', 'git', 'gh', 'node', 'python', 'fd', 'fzf', 'jq', 'yq', 'uv', 'pnpm', 'bat', 'delta', 'eza', 'zoxide', 'starship', 'lazygit', 'just', 'hyperfine', '7z', 'sd', 'xh', 'mise', 'dust', 'procs', 'nougat', 'ocrmypdf', 'pdftotext', 'pdftoppm', 'mutool', 'tesseract', 'Capture2Text_CLI', 'ollama', 'llava', 'easyocr-read', 'paddleocr-read', 'donut-ocr', 'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline', 'doc-scan', 'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'office-tools', 'office-tool-paths', 'office-samples', 'typst-pdf', 'tex-xe', 'marp-deck', 'marp-pptx', 'marp-pdf', 'marp-pptx-editable', 'typst', 'marp', 'xelatex', 'pdflatex', 'latexmk', 'dvisvgm', 'pandoc', 'magick', 'gswin64c', 'soffice', 'unopkg', 'inkscape', 'draw.io', 'SumatraPDF', 'scribus', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'lg', 'j', 'bench', 'phone-help', 'phone-status', 'phone-diag', 'phone-noise-audit', 'phone-storage-scan', 'phone-ui-dump', 'phone-pull', 'phone-archive', 'phone-mirror', 'phone-shizuku-start', 'phone-apk-list', 'phone-apk-import', 'phone-apk-install', 'json', 'yaml', 'grepcode', 'proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear', 'remote-client-init', 'remote-server-bundle', 'remote-health', 'vps-provider-show', 'vps-plan-suggest', 'vps-bundle-new', 'ss-source-show', 'ss-secret-discover', 'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-client-info', 'ss-client-sync', 'ss-server-bundle', 'auth-browser', 'auth-browser-list', 'auth-comet-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-moodle-spec', 'auth-sharepoint-spec', 'auth-panopto-spec', 'auth-moodle-dump', 'auth-sharepoint-dump', 'auth-panopto-dump', 'auth-chatgpt-browser', 'auth-chatgpt-dump', 'auth-chatgpt-export', 'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-perplexity-ask', 'auth-extension-install', 'auth-extension-list', 'auth-extension-enable', 'auth-extension-disable', 'auth-extension-open', 'auth-extension-click', 'auth-extension-remove', 'auth-help')
+        [string[]]$Name = @('codehint', 'toolkit-inventory', 'codex', 'curl', 'wget', 'capture2text', 'adb', 'scrcpy', 'rg', 'git', 'gh', 'node', 'python', 'fd', 'fzf', 'jq', 'yq', 'uv', 'pnpm', 'bat', 'delta', 'eza', 'zoxide', 'starship', 'lazygit', 'just', 'hyperfine', '7z', 'sd', 'xh', 'mise', 'dust', 'procs', 'nougat', 'ocrmypdf', 'pdftotext', 'pdftoppm', 'mutool', 'tesseract', 'Capture2Text_CLI', 'ollama', 'llava', 'easyocr-read', 'paddleocr-read', 'donut-ocr', 'ocr-smart', 'pdf-smart', 'translate-smart', 'doc-pipeline', 'doc-scan', 'doc-batch', 'doc-config', 'doc-help', 'ocr-models', 'office-tools', 'office-tool-paths', 'office-samples', 'coursepack-init', 'coursepack-build', 'typst-pdf', 'tex-xe', 'marp-deck', 'marp-pptx', 'marp-pdf', 'marp-pptx-editable', 'ppt-new', 'ppt-slide-size', 'ppt-add-slide', 'ppt-add-shape', 'ppt-add-textbox', 'ppt-add-image', 'ppt-style-shape', 'ppt-arrange', 'ppt-shapes', 'ppt-remove-bg', 'ppt-export', 'ppt-spec', 'ppt-addin-list', 'ppt-addin-install', 'ppt-addin-register', 'typst', 'marp', 'xelatex', 'pdflatex', 'latexmk', 'dvisvgm', 'pandoc', 'magick', 'gswin64c', 'soffice', 'unopkg', 'inkscape', 'draw.io', 'SumatraPDF', 'scribus', 'whichall', 'refresh-path', 'mkcd', 'll', 'la', 'lt', 'z', 'lg', 'j', 'bench', 'phone-help', 'phone-status', 'phone-diag', 'phone-noise-audit', 'phone-storage-scan', 'phone-ui-dump', 'phone-pull', 'phone-archive', 'phone-mirror', 'phone-shizuku-start', 'phone-apk-list', 'phone-apk-import', 'phone-apk-install', 'json', 'yaml', 'grepcode', 'proxy-profile-set', 'proxy-profile-show', 'proxy-profile-clear', 'remote-client-init', 'remote-server-bundle', 'remote-health', 'vps-provider-show', 'vps-plan-suggest', 'vps-bundle-new', 'ss-source-show', 'ss-secret-discover', 'ss-secret-import', 'ss-secret-clear', 'ss-profile-new', 'ss-client-fetch', 'ss-client-open', 'ss-client-info', 'ss-client-sync', 'ss-server-bundle', 'auth-browser', 'auth-browser-list', 'auth-comet-browser', 'auth-links', 'auth-spec', 'auth-save', 'auth-html', 'auth-batch', 'auth-dump', 'auth-moodle-spec', 'auth-sharepoint-spec', 'auth-panopto-spec', 'auth-moodle-dump', 'auth-sharepoint-dump', 'auth-panopto-dump', 'auth-chatgpt-browser', 'auth-chatgpt-dump', 'auth-chatgpt-export', 'auth-chatgpt-study-dump', 'auth-chatgpt-list', 'auth-chatgpt-open', 'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-perplexity-ask', 'auth-extension-install', 'auth-extension-list', 'auth-extension-enable', 'auth-extension-disable', 'auth-extension-open', 'auth-extension-click', 'auth-extension-remove', 'auth-help')
     )
 
     foreach ($query in $Name) {
@@ -914,7 +935,7 @@ function Show-CodexToolkitInventory {
         }
         @{
             Title = 'Office Typesetting'
-            Names = @('office-tools', 'office-tool-paths', 'office-samples', 'typst-pdf', 'tex-xe', 'marp-deck', 'marp-pptx', 'marp-pdf', 'marp-pptx-editable', 'typst', 'marp', 'xelatex', 'pdflatex', 'latexmk', 'dvisvgm', 'pandoc', 'magick', 'gswin64c', 'soffice', 'unopkg', 'inkscape', 'draw.io', 'SumatraPDF', 'scribus')
+            Names = @('office-tools', 'office-tool-paths', 'office-samples', 'coursepack-init', 'coursepack-build', 'typst-pdf', 'tex-xe', 'marp-deck', 'marp-pptx', 'marp-pdf', 'marp-pptx-editable', 'ppt-new', 'ppt-slide-size', 'ppt-add-slide', 'ppt-add-shape', 'ppt-add-textbox', 'ppt-add-image', 'ppt-style-shape', 'ppt-arrange', 'ppt-shapes', 'ppt-remove-bg', 'ppt-export', 'ppt-spec', 'ppt-addin-list', 'ppt-addin-install', 'ppt-addin-register', 'typst', 'marp', 'xelatex', 'pdflatex', 'latexmk', 'dvisvgm', 'pandoc', 'magick', 'gswin64c', 'soffice', 'unopkg', 'inkscape', 'draw.io', 'SumatraPDF', 'scribus')
         }
         @{
             Title = 'Web Auth'

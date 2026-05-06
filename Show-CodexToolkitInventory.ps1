@@ -41,7 +41,7 @@ $groups = @(
     }
     @{
         Title = 'Office Typesetting'
-        Names = @('office-tools', 'office-tool-paths', 'office-samples', 'typst-pdf', 'tex-xe', 'marp-deck', 'marp-pptx', 'marp-pdf', 'marp-pptx-editable', 'typst', 'marp', 'xelatex', 'pdflatex', 'latexmk', 'dvisvgm', 'pandoc', 'magick', 'gswin64c', 'soffice', 'unopkg', 'inkscape', 'draw.io', 'SumatraPDF', 'scribus')
+        Names = @('office-tools', 'office-tool-paths', 'office-samples', 'coursepack-init', 'coursepack-build', 'typst-pdf', 'tex-xe', 'marp-deck', 'marp-pptx', 'marp-pdf', 'marp-pptx-editable', 'ppt-new', 'ppt-slide-size', 'ppt-add-slide', 'ppt-add-shape', 'ppt-add-textbox', 'ppt-add-image', 'ppt-style-shape', 'ppt-arrange', 'ppt-shapes', 'ppt-remove-bg', 'ppt-export', 'ppt-spec', 'ppt-addin-list', 'ppt-addin-install', 'ppt-addin-register', 'typst', 'marp', 'xelatex', 'pdflatex', 'latexmk', 'dvisvgm', 'pandoc', 'magick', 'gswin64c', 'soffice', 'unopkg', 'inkscape', 'draw.io', 'SumatraPDF', 'scribus')
     }
     @{
         Title = 'Web Auth'

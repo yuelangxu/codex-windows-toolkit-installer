@@ -141,8 +141,182 @@ function Test-LibreOfficeExtensionInstalled {
 function Sync-OfficeTypesettingProcessPath {
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
     $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-    $pathParts = @($userPath, $machinePath, $env:Path) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-    $env:Path = [string]::Join(';', $pathParts)
+    $segments = New-Object System.Collections.Generic.List[string]
+    foreach ($pathValue in @($userPath, $machinePath, $env:Path)) {
+        if ([string]::IsNullOrWhiteSpace($pathValue)) {
+            continue
+        }
+
+        foreach ($segment in ($pathValue -split ';')) {
+            $trimmedSegment = $segment.Trim()
+            if ([string]::IsNullOrWhiteSpace($trimmedSegment)) {
+                continue
+            }
+
+            if (-not $segments.Contains($trimmedSegment)) {
+                [void]$segments.Add($trimmedSegment)
+            }
+        }
+    }
+
+    $env:Path = [string]::Join(';', $segments)
+}
+
+function Copy-OfficeFileWithLockTolerance {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourcePath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationPath,
+
+        [string]$DisplayName = 'file'
+    )
+
+    if (Test-Path -LiteralPath $DestinationPath) {
+        $sourceItem = Get-Item -LiteralPath $SourcePath -ErrorAction Stop
+        $destinationItem = Get-Item -LiteralPath $DestinationPath -ErrorAction SilentlyContinue
+        if ($null -ne $destinationItem -and $destinationItem.Length -eq $sourceItem.Length) {
+            Write-Note ("Skipping {0}; destination already exists with matching size at {1}" -f $DisplayName, $DestinationPath)
+            return
+        }
+    }
+
+    try {
+        Copy-Item -LiteralPath $SourcePath -Destination $DestinationPath -Force
+    } catch [System.IO.IOException] {
+        if (Test-Path -LiteralPath $DestinationPath) {
+            Write-Warning ("{0} is currently in use, but an existing copy is already present at {1}. Keeping the existing file." -f $DisplayName, $DestinationPath)
+            return
+        }
+
+        throw
+    }
+}
+
+function Release-PowerPointComObject {
+    param(
+        $Object
+    )
+
+    if ($null -eq $Object) {
+        return
+    }
+
+    if ([Runtime.InteropServices.Marshal]::IsComObject($Object)) {
+        [Runtime.InteropServices.Marshal]::ReleaseComObject($Object) | Out-Null
+    }
+}
+
+function Test-PowerPointRetryableComException {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Exception]$Exception
+    )
+
+    if ($Exception.Message -match 'RPC_E_CALL_REJECTED|Call was rejected by callee|The message filter indicated that the application is busy') {
+        return $true
+    }
+
+    return $Exception.HResult -in @(-2147418111, -2147417846)
+}
+
+function Invoke-PowerPointComAction {
+    param(
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$Action,
+
+        [int]$RetryCount = 8,
+
+        [int]$RetryDelayMilliseconds = 350
+    )
+
+    for ($attempt = 1; $attempt -le $RetryCount; $attempt++) {
+        try {
+            return & $Action
+        } catch {
+            if ($attempt -ge $RetryCount -or -not (Test-PowerPointRetryableComException -Exception $_.Exception)) {
+                throw
+            }
+
+            Start-Sleep -Milliseconds ($RetryDelayMilliseconds * $attempt)
+        }
+    }
+}
+
+function Close-PowerPointComInstance {
+    param(
+        [Parameter(Mandatory = $true)]
+        $Application,
+
+        [switch]$Quit
+    )
+
+    if ($Quit) {
+        try {
+            Invoke-PowerPointComAction -Action { $Application.Quit() } | Out-Null
+        } catch {
+        }
+    }
+
+    Release-PowerPointComObject -Object $Application
+}
+
+function Get-PowerPointRegistryVersion {
+    $defaultVersion = '16.0'
+    $officeRoot = 'HKCU:\Software\Microsoft\Office'
+    if (-not (Test-Path -LiteralPath $officeRoot)) {
+        return $defaultVersion
+    }
+
+    $versions = Get-ChildItem -LiteralPath $officeRoot -ErrorAction SilentlyContinue |
+        Where-Object { $_.PSChildName -match '^\d+\.\d+$' } |
+        Sort-Object { [version]$_.PSChildName } -Descending
+    if ($versions) {
+        return $versions[0].PSChildName
+    }
+
+    return $defaultVersion
+}
+
+function Get-PowerPointAddInRegistryRoot {
+    $version = Get-PowerPointRegistryVersion
+    return "HKCU:\Software\Microsoft\Office\$version\PowerPoint\AddIns"
+}
+
+function Get-PowerPointAddInLoadTimesPath {
+    $version = Get-PowerPointRegistryVersion
+    return "HKCU:\Software\Microsoft\Office\$version\PowerPoint\AddInLoadTimes"
+}
+
+function Set-PowerPointAddInRegistryEntry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$AddInPath
+    )
+
+    $resolvedAddInPath = [IO.Path]::GetFullPath($AddInPath)
+    $addInName = [IO.Path]::GetFileNameWithoutExtension($resolvedAddInPath)
+    $registryRoot = Get-PowerPointAddInRegistryRoot
+    $entryPath = Join-Path $registryRoot $addInName
+
+    if (-not (Test-Path -LiteralPath $registryRoot)) {
+        New-Item -Path $registryRoot -Force | Out-Null
+    }
+
+    if (-not (Test-Path -LiteralPath $entryPath)) {
+        New-Item -Path $entryPath -Force | Out-Null
+    }
+
+    Set-ItemProperty -LiteralPath $entryPath -Name '(default)' -Value $addInName -Force
+    Set-ItemProperty -LiteralPath $entryPath -Name 'Path' -Value $resolvedAddInPath -Force
+    Set-ItemProperty -LiteralPath $entryPath -Name 'AutoLoad' -Value 1 -Type DWord -Force
+
+    $loadTimesPath = Get-PowerPointAddInLoadTimesPath
+    if (Test-Path -LiteralPath $loadTimesPath) {
+        Remove-ItemProperty -LiteralPath $loadTimesPath -Name $resolvedAddInPath -ErrorAction SilentlyContinue
+        Remove-ItemProperty -LiteralPath $loadTimesPath -Name ([IO.Path]::GetFileName($resolvedAddInPath)) -ErrorAction SilentlyContinue
+    }
 }
 
 function Register-PowerPointAddInForAutoLoad {
@@ -151,48 +325,193 @@ function Register-PowerPointAddInForAutoLoad {
         [string]$AddInPath
     )
 
+    $resolvedAddInPath = [IO.Path]::GetFullPath($AddInPath)
+    Set-PowerPointAddInRegistryEntry -AddInPath $resolvedAddInPath
+
     $ppt = $null
     $addin = $null
+    $addIns = $null
     $createdInstance = $false
+    $comWarning = $null
 
     try {
         try {
-            $ppt = [Runtime.InteropServices.Marshal]::GetActiveObject('PowerPoint.Application')
-        } catch {
-            $ppt = $null
-        }
-
-        if ($null -eq $ppt) {
-            $ppt = New-Object -ComObject PowerPoint.Application
-            $createdInstance = $true
-        }
-
-        $ppt.Visible = -1
-        foreach ($candidate in @($ppt.AddIns)) {
-            if ($candidate.FullName -eq $AddInPath -or $candidate.Name -like 'IguanaTex*') {
-                $addin = $candidate
-                break
+            try {
+                $ppt = [Runtime.InteropServices.Marshal]::GetActiveObject('PowerPoint.Application')
+            } catch {
+                $ppt = $null
             }
-        }
 
-        if ($null -eq $addin) {
-            $addin = $ppt.AddIns.Add($AddInPath)
-        }
+            if ($null -eq $ppt) {
+                $ppt = New-Object -ComObject PowerPoint.Application
+                $createdInstance = $true
+            }
 
-        # AutoLoad is the durable setting: it also marks the add-in as registered.
-        $addin.AutoLoad = -1
-        $addin.Loaded = -1
+            try {
+                Invoke-PowerPointComAction -Action { $ppt.Visible = -1 } | Out-Null
+            } catch {
+            }
+            $addIns = Invoke-PowerPointComAction -Action { $ppt.AddIns }
+            if ($null -eq $addIns) {
+                throw 'PowerPoint AddIns collection was unavailable.'
+            }
+
+            $addInCount = Invoke-PowerPointComAction -Action { $addIns.Count }
+            for ($index = 1; $index -le $addInCount; $index++) {
+                $candidate = Invoke-PowerPointComAction -Action { $addIns.Item($index) }
+                try {
+                    if ($null -ne $candidate -and $candidate.FullName -and $candidate.FullName.Equals($resolvedAddInPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+                        $addin = $candidate
+                        break
+                    }
+                } finally {
+                    if ($null -ne $candidate -and ($null -eq $addin -or -not [object]::ReferenceEquals($candidate, $addin))) {
+                        Release-PowerPointComObject -Object $candidate
+                    }
+                }
+            }
+
+            if ($null -eq $addin) {
+                $addin = Invoke-PowerPointComAction -Action { $addIns.Add($resolvedAddInPath) }
+            }
+
+            # AutoLoad is the durable setting: it also marks the add-in as registered.
+            Invoke-PowerPointComAction -Action { $addin.AutoLoad = -1 } | Out-Null
+            Invoke-PowerPointComAction -Action { $addin.Loaded = -1 } | Out-Null
+        } catch {
+            $comWarning = $_.Exception.Message
+        }
     } finally {
-        if ($null -ne $addin) {
-            [Runtime.InteropServices.Marshal]::ReleaseComObject($addin) | Out-Null
-        }
+        Release-PowerPointComObject -Object $addin
+        Release-PowerPointComObject -Object $addIns
 
         if ($null -ne $ppt) {
-            if ($createdInstance) {
-                $ppt.Quit()
-            }
+            Close-PowerPointComInstance -Application $ppt -Quit:$createdInstance
+        }
+    }
 
-            [Runtime.InteropServices.Marshal]::ReleaseComObject($ppt) | Out-Null
+    return [pscustomobject]@{
+        Path = $resolvedAddInPath
+        RegistryAutoLoad = $true
+        ComWarning = $comWarning
+    }
+}
+
+function Install-BrightSlidePowerPointAddIn {
+    $targetPath = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Microsoft\AddIns\BrightCarbon\BrightSlide\BrightSlide.ppam'
+    if (-not (Test-Path -LiteralPath $targetPath)) {
+        $downloadRoot = Get-OfficeTypesettingDownloadRoot
+        $installerPath = Join-Path $downloadRoot 'Setup_BrightSlide_1.1.1.exe'
+        Invoke-WebRequest -Uri 'https://brightcarbon.com/assets/BrightSlide/Windows/Setup_BrightSlide_1.1.1.exe?v=1' -OutFile $installerPath -Headers @{ 'User-Agent' = 'Codex-Windows-Toolkit' }
+        Unblock-File -LiteralPath $installerPath -ErrorAction SilentlyContinue
+        $installerExitCode = Invoke-OfficeTypesettingProcess -FilePath $installerPath -ArgumentList @('/VERYSILENT', '/NORESTART', '/SP-')
+        if ($installerExitCode -ne 0 -and -not (Test-Path -LiteralPath $targetPath)) {
+            Write-Warning ("BrightSlide installer returned {0} and the add-in was not detected at {1}." -f $installerExitCode, $targetPath)
+            return
+        }
+    }
+
+    if (Test-Path -LiteralPath $targetPath) {
+        try {
+            $registration = Register-PowerPointAddInForAutoLoad -AddInPath $targetPath
+            if ($registration.ComWarning) {
+                Write-Note ("BrightSlide registry fallback is active; PowerPoint COM warm-up still reported: {0}" -f $registration.ComWarning)
+            }
+            Write-Note ("BrightSlide registered for PowerPoint auto-load at {0}" -f $targetPath)
+        } catch {
+            Write-Warning ("BrightSlide was installed but PowerPoint auto-load registration was skipped: {0}" -f $_.Exception.Message)
+        }
+    }
+}
+
+function Install-InstrumentaPowerPointAddIn {
+    $targetPath = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Microsoft\AddIns\InstrumentaPowerpointToolbar.ppam'
+    if (-not (Test-Path -LiteralPath $targetPath)) {
+        $downloadRoot = Get-OfficeTypesettingDownloadRoot
+        $downloadPath = Join-Path $downloadRoot 'InstrumentaPowerpointToolbar.ppam'
+        Invoke-WebRequest -Uri 'https://github.com/iappyx/Instrumenta/releases/download/1.66/InstrumentaPowerpointToolbar.ppam' -OutFile $downloadPath -Headers @{ 'User-Agent' = 'Codex-Windows-Toolkit' }
+        Unblock-File -LiteralPath $downloadPath -ErrorAction SilentlyContinue
+        Copy-OfficeFileWithLockTolerance -SourcePath $downloadPath -DestinationPath $targetPath -DisplayName 'Instrumenta add-in'
+    }
+
+    try {
+        $registration = Register-PowerPointAddInForAutoLoad -AddInPath $targetPath
+        if ($registration.ComWarning) {
+            Write-Note ("Instrumenta registry fallback is active; PowerPoint COM warm-up still reported: {0}" -f $registration.ComWarning)
+        }
+        Write-Note ("Instrumenta registered for PowerPoint auto-load at {0}" -f $targetPath)
+    } catch {
+        Write-Warning ("Instrumenta was copied, but PowerPoint auto-load registration was skipped: {0}" -f $_.Exception.Message)
+    }
+}
+
+function Install-ThorPowerPointAddIn {
+    $targetPath = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Microsoft\AddIns\PPTools\THOR\THOR.PPAM'
+    if (-not (Test-Path -LiteralPath $targetPath)) {
+        $downloadRoot = Get-OfficeTypesettingDownloadRoot
+        $msiPath = Join-Path $downloadRoot 'THOR_Setup.msi'
+        Invoke-WebRequest -Uri 'https://www.pptools.com/free/THOR_Setup.msi' -OutFile $msiPath -Headers @{ 'User-Agent' = 'Codex-Windows-Toolkit' }
+        $msiExitCode = Invoke-OfficeTypesettingProcess -FilePath 'msiexec.exe' -ArgumentList @('/i', $msiPath, '/qn', '/norestart')
+        if ($msiExitCode -ne 0 -and -not (Test-Path -LiteralPath $targetPath)) {
+            Write-Warning ("THOR MSI returned {0} and the add-in was not detected at {1}." -f $msiExitCode, $targetPath)
+            return
+        }
+    }
+
+    if (Test-Path -LiteralPath $targetPath) {
+        try {
+            $registration = Register-PowerPointAddInForAutoLoad -AddInPath $targetPath
+            if ($registration.ComWarning) {
+                Write-Note ("THOR registry fallback is active; PowerPoint COM warm-up still reported: {0}" -f $registration.ComWarning)
+            }
+            Write-Note ("THOR registered for PowerPoint auto-load at {0}" -f $targetPath)
+        } catch {
+            Write-Warning ("THOR was installed but PowerPoint auto-load registration was skipped: {0}" -f $_.Exception.Message)
+        }
+    }
+}
+
+function Install-PowerUpKitPowerPointAddIn {
+    $addInRoot = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Microsoft\AddIns'
+    Ensure-Directory -Path $addInRoot
+    $targetPath = Join-Path $addInRoot 'PowerUpKit_v1_9_2.ppam'
+    $officeExamplesRoot = Join-Path (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Programs\OfficeTypesettingTools') 'examples\powerupkit'
+    Ensure-Directory -Path $officeExamplesRoot
+
+    if (-not (Test-Path -LiteralPath $targetPath)) {
+        $downloadRoot = Get-OfficeTypesettingDownloadRoot
+        $zipPath = Join-Path $downloadRoot 'PowerUpKit_latest.zip'
+        $extractRoot = Join-Path $downloadRoot 'PowerUpKit_latest'
+        Invoke-WebRequest -Uri 'https://powerupkit.com//public/download/PowerUpKit_v1.9.2.zip' -OutFile $zipPath -Headers @{ 'User-Agent' = 'Codex-Windows-Toolkit' }
+        if (Test-Path -LiteralPath $extractRoot) {
+            Remove-Item -LiteralPath $extractRoot -Recurse -Force
+        }
+
+        Expand-Archive -LiteralPath $zipPath -DestinationPath $extractRoot -Force
+        $ppam = Get-ChildItem -LiteralPath $extractRoot -Recurse -File -Filter '*.ppam' | Select-Object -First 1
+        if ($null -eq $ppam) {
+            Write-Warning 'Power Up Kit archive was downloaded, but no .ppam file was found inside it.'
+            return
+        }
+
+        Copy-OfficeFileWithLockTolerance -SourcePath $ppam.FullName -DestinationPath $targetPath -DisplayName 'Power Up Kit add-in'
+        Unblock-File -LiteralPath $targetPath -ErrorAction SilentlyContinue
+
+        $favoriteDeck = Get-ChildItem -LiteralPath $extractRoot -Recurse -File | Where-Object { $_.Name -like '*Favorite*.pptx' } | Select-Object -First 1
+        if ($null -ne $favoriteDeck) {
+            Copy-Item -LiteralPath $favoriteDeck.FullName -Destination (Join-Path $officeExamplesRoot $favoriteDeck.Name) -Force
+        }
+    }
+
+    if (Test-Path -LiteralPath $targetPath) {
+        try {
+            $registration = Register-PowerPointAddInForAutoLoad -AddInPath $targetPath
+            if ($registration.ComWarning) {
+                Write-Note ("Power Up Kit registry fallback is active; PowerPoint COM warm-up still reported: {0}" -f $registration.ComWarning)
+            }
+            Write-Note ("Power Up Kit registered for PowerPoint auto-load at {0}" -f $targetPath)
+        } catch {
+            Write-Warning ("Power Up Kit was installed but PowerPoint auto-load registration was skipped: {0}" -f $_.Exception.Message)
         }
     }
 }
@@ -217,7 +536,7 @@ function Install-IguanaTexPowerPointAddIn {
     $addInRoot = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Microsoft\AddIns'
     Ensure-Directory -Path $addInRoot
     $installedPath = Join-Path $addInRoot $ppamAsset.name
-    Copy-Item -LiteralPath $downloadPath -Destination $installedPath -Force
+    Copy-OfficeFileWithLockTolerance -SourcePath $downloadPath -DestinationPath $installedPath -DisplayName 'IguanaTex add-in'
     Unblock-File -LiteralPath $installedPath -ErrorAction SilentlyContinue
 
     $trustedLocation = 'HKCU:\Software\Microsoft\Office\16.0\PowerPoint\Security\Trusted Locations\Location99'
@@ -227,7 +546,10 @@ function Install-IguanaTexPowerPointAddIn {
     New-ItemProperty -Path $trustedLocation -Name Description -Value 'Codex Office typesetting add-ins' -PropertyType String -Force | Out-Null
 
     try {
-        Register-PowerPointAddInForAutoLoad -AddInPath $installedPath
+        $registration = Register-PowerPointAddInForAutoLoad -AddInPath $installedPath
+        if ($registration.ComWarning) {
+            Write-Note ("IguanaTex registry fallback is active; PowerPoint COM warm-up still reported: {0}" -f $registration.ComWarning)
+        }
     } catch {
         Write-Warning ("IguanaTex was copied and trusted, but durable PowerPoint auto-load registration was skipped: {0}" -f $_.Exception.Message)
     }
@@ -347,6 +669,10 @@ Sync-OfficeTypesettingProcessPath
 Install-OfficeTypesettingNpmPackages
 Initialize-MiKTeXForOfficeTypesetting
 Install-IguanaTexPowerPointAddIn
+Install-BrightSlidePowerPointAddIn
+Install-InstrumentaPowerPointAddIn
+Install-ThorPowerPointAddIn
+Install-PowerUpKitPowerPointAddIn
 Install-LibreOfficeLatexExtensions
 
 Write-Host 'Office typesetting tool pass completed.' -ForegroundColor Green

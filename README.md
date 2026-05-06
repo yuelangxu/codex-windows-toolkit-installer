@@ -70,6 +70,20 @@ This installer packages those rough edges into a source-visible, repairable Powe
 - isolated Python 3.11 OCR environment
 - helper commands such as `ocr-smart`, `pdf-smart`, `easyocr-read`, `paddleocr-read`, and `donut-ocr`
 
+### Office / PowerPoint workflow
+
+- `office-tools`, `office-tool-paths`, `office-samples`
+- `coursepack-init`, `coursepack-build`
+- `ppt-new`, `ppt-slide-size`, `ppt-add-slide`
+- `ppt-add-shape`, `ppt-add-textbox`, `ppt-add-image`, `ppt-style-shape`, `ppt-arrange`, `ppt-shapes`
+- `ppt-export`, `ppt-spec`
+- `ppt-addin-list`, `ppt-addin-install`, `ppt-addin-register`
+- PowerPoint add-ins wired into the installer: `IguanaTex`, `BrightSlide`, `Instrumenta`, `THOR`, and `Power Up Kit`
+
+This layer turns Office authoring into a first-class Codex scenario instead of a sidecar workflow.
+The installer now deploys both typesetting tools and PowerPoint-native automation, so AI agents can generate teaching material, shape-rich slides, editable decks, and printable handouts from the same PowerShell environment.
+It also makes the free PowerPoint add-ins durable by registering them for auto-load, which avoids the old “open the PPAM manually every time” loop.
+
 ### Source-carried helper scripts
 
 - `codex.phone-tools.ps1`
@@ -158,6 +172,7 @@ This toolkit raises the floor and the ceiling for Codex on Windows.
 - It adds authenticated ChatGPT automation commands to the same PowerShell toolbelt, so browser-driven save, dump, ask, and cleanup workflows live beside the rest of the auth tooling.
 - It adds explicit browser selection and Comet-aware automation, so Codex can reuse the authenticated browser state that is actually present on the machine instead of silently falling back to Edge-only assumptions.
 - It adds browser-extension management and extension-UI automation, so Codex can install helper extensions, load them into a predictable browser session, and drive their popups or settings pages from the shell.
+- It adds a PowerPoint COM automation layer plus free slide-design add-ins, so Codex can do structured PPT layout work instead of falling back to fragile UI clicking.
 - It improves shell feedback with inventory, prediction, aliases, and prompt context, which shortens the loop between idea and execution.
 - It avoids common Windows failure modes around OCR, Python package compatibility, DLL paths, and profile location mismatches.
 - It makes machine setup repeatable, so rebuilding a usable environment no longer depends on memory or handwritten notes.

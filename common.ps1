@@ -260,8 +260,9 @@ function Get-ToolkitInventoryCommandNames {
         'auth-extension-enable', 'auth-extension-disable', 'auth-extension-open', 'auth-extension-click',
         'auth-extension-remove', 'auth-help', 'easyocr-read', 'ollama',
         'paddleocr-read', 'donut-ocr', 'llava', 'nougat', 'ocrmypdf',
-        'office-tools', 'office-tool-paths', 'office-samples', 'typst-pdf', 'tex-xe',
+        'office-tools', 'office-tool-paths', 'office-samples', 'coursepack-init', 'coursepack-build', 'typst-pdf', 'tex-xe',
         'marp-deck', 'marp-pptx', 'marp-pdf', 'marp-pptx-editable',
+        'ppt-new', 'ppt-slide-size', 'ppt-add-slide', 'ppt-add-shape', 'ppt-add-textbox', 'ppt-add-image', 'ppt-style-shape', 'ppt-arrange', 'ppt-shapes', 'ppt-remove-bg', 'ppt-export', 'ppt-spec', 'ppt-addin-list', 'ppt-addin-install', 'ppt-addin-register',
         'typst', 'marp', 'xelatex', 'pdflatex', 'latexmk', 'dvisvgm',
         'pandoc', 'magick', 'gswin64c', 'soffice', 'unopkg', 'inkscape',
         'draw.io', 'SumatraPDF', 'scribus'
