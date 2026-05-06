@@ -522,9 +522,55 @@ function Get-PackageState {
     }
 
     $missing = @($resolvedCommands.GetEnumerator() | Where-Object { [string]::IsNullOrWhiteSpace($_.Value) } | ForEach-Object { $_.Key })
+    $resolvedDetectPaths = @()
+    if ($Package.ContainsKey('DetectPaths')) {
+        foreach ($candidatePath in $Package.DetectPaths) {
+            if ([string]::IsNullOrWhiteSpace($candidatePath)) {
+                continue
+            }
+
+            $expandedPath = [Environment]::ExpandEnvironmentVariables([string]$candidatePath)
+            if ($expandedPath.IndexOfAny(@('*', '?')) -ge 0) {
+                $matches = @(Get-ChildItem -Path $expandedPath -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+                if ($matches.Count -gt 0) {
+                    $resolvedDetectPaths += $matches
+                }
+            } elseif (Test-Path -LiteralPath $expandedPath) {
+                $resolvedDetectPaths += $expandedPath
+            }
+        }
+    }
+
+    if ($missing.Count -gt 0 -and $resolvedDetectPaths.Count -gt 0) {
+        return @{
+            Installed = $true
+            Detail = [string]::Join(', ', $resolvedDetectPaths)
+        }
+    }
+
     if ($missing.Count -gt 0 -and $Package.ContainsKey('Id') -and (Find-CommandPath -Name 'winget')) {
-        $wingetList = & winget list --exact --id $Package.Id --source winget 2>$null
-        if ($LASTEXITCODE -eq 0 -and ($wingetList | Out-String) -match [regex]::Escape($Package.Id)) {
+        $wingetPath = Find-CommandPath -Name 'winget'
+        $stdoutPath = [System.IO.Path]::GetTempFileName()
+        $stderrPath = [System.IO.Path]::GetTempFileName()
+        $wingetList = ''
+        $wingetExitCode = 1
+
+        try {
+            $wingetProcess = Start-Process -FilePath $wingetPath `
+                -ArgumentList @('list', '--exact', '--id', $Package.Id, '--source', 'winget') `
+                -Wait -PassThru -WindowStyle Hidden `
+                -RedirectStandardOutput $stdoutPath `
+                -RedirectStandardError $stderrPath
+            $wingetExitCode = $wingetProcess.ExitCode
+            $wingetList = Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue
+        } catch {
+            $wingetList = ''
+            $wingetExitCode = 1
+        } finally {
+            Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+        }
+
+        if ($wingetExitCode -eq 0 -and $wingetList -match [regex]::Escape($Package.Id)) {
             return @{
                 Installed = $true
                 Detail = "winget:$($Package.Id)"

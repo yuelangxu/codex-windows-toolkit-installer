@@ -258,6 +258,13 @@
             Id = 'MiKTeX.MiKTeX'
             DisplayName = 'MiKTeX'
             Commands = @('xelatex', 'pdflatex', 'latexmk', 'dvisvgm', 'mpm')
+            DetectPaths = @(
+                '%LOCALAPPDATA%\Programs\MiKTeX\miktex\bin\x64\xelatex.exe',
+                '%LOCALAPPDATA%\Programs\MiKTeX\miktex\bin\x64\pdflatex.exe',
+                '%LOCALAPPDATA%\Programs\MiKTeX\miktex\bin\x64\latexmk.exe',
+                '%LOCALAPPDATA%\Programs\MiKTeX\miktex\bin\x64\dvisvgm.exe',
+                '%LOCALAPPDATA%\Programs\MiKTeX\miktex\bin\x64\mpm.exe'
+            )
             Category = 'OfficeTypesetting'
             Scope = 'user'
         }
@@ -279,6 +286,9 @@
             Id = 'Typst.Typst'
             DisplayName = 'Typst'
             Commands = @('typst')
+            DetectPaths = @(
+                '%LOCALAPPDATA%\Microsoft\WinGet\Links\typst.exe'
+            )
             Category = 'OfficeTypesetting'
             Scope = 'user'
         }
@@ -300,6 +310,10 @@
             Id = 'JGraph.Draw'
             DisplayName = 'draw.io'
             Commands = @('draw.io')
+            DetectPaths = @(
+                '%ProgramFiles%\draw.io\draw.io.exe',
+                '%LOCALAPPDATA%\Programs\draw.io\draw.io.exe'
+            )
             Category = 'OfficeTypesetting'
             Scope = 'default'
         }
@@ -307,6 +321,10 @@
             Id = 'SumatraPDF.SumatraPDF'
             DisplayName = 'SumatraPDF'
             Commands = @('SumatraPDF')
+            DetectPaths = @(
+                '%LOCALAPPDATA%\SumatraPDF\SumatraPDF.exe',
+                '%ProgramFiles%\SumatraPDF\SumatraPDF.exe'
+            )
             Category = 'OfficeTypesetting'
             Scope = 'default'
         }
@@ -314,6 +332,10 @@
             Id = 'Scribus.Scribus'
             DisplayName = 'Scribus'
             Commands = @('scribus')
+            DetectPaths = @(
+                '%ProgramFiles%\Scribus 1.6.6\Scribus.exe',
+                '%ProgramFiles%\Scribus 1.6.5\Scribus.exe'
+            )
             Category = 'OfficeTypesetting'
             Scope = 'default'
         }
@@ -321,6 +343,11 @@
             Id = 'Hibbiki.Chromium'
             DisplayName = 'Chromium'
             Commands = @('chrome')
+            DetectPaths = @(
+                '%LOCALAPPDATA%\Chromium\Application\chrome.exe',
+                '%ProgramFiles%\Chromium\Application\chrome.exe',
+                '%ProgramFiles(x86)%\Chromium\Application\chrome.exe'
+            )
             Category = 'OfficeTypesetting'
             Scope = 'user'
         }

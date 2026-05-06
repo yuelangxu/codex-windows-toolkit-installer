@@ -12,6 +12,18 @@ param(
 $context = Get-ToolkitContext -ToolkitRoot $ToolkitRoot
 $resolvedScope = Resolve-PreferredInstallScope -InstallScope $InstallScope
 
+function Invoke-OfficeTypesettingProcess {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+
+        [string[]]$ArgumentList = @()
+    )
+
+    $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -Wait -PassThru -WindowStyle Hidden
+    return $process.ExitCode
+}
+
 function Invoke-OfficeTypesettingWingetInstall {
     param(
         [Parameter(Mandatory = $true)]
@@ -41,8 +53,9 @@ function Invoke-OfficeTypesettingWingetInstall {
         $arguments += @('--scope', $packageScope)
     }
 
-    & winget @arguments
-    if ($LASTEXITCODE -ne 0) {
+    $wingetPath = Find-CommandPath -Name 'winget'
+    $wingetExitCode = Invoke-OfficeTypesettingProcess -FilePath $wingetPath -ArgumentList $arguments
+    if ($wingetExitCode -ne 0) {
         $postInstallState = Get-PackageState -Package $Package
         if ($postInstallState.Installed) {
             Write-Warning ("winget returned a non-zero exit code for {0}, but the package is now detectable. Continuing." -f $Package.DisplayName)
@@ -72,8 +85,8 @@ function Install-OfficeTypesettingNpmPackages {
         }
 
         Write-Host ("Installing npm package {0} ({1})" -f $package.DisplayName, $package.Package) -ForegroundColor Yellow
-        & npm.cmd install -g $package.Package
-        if ($LASTEXITCODE -ne 0) {
+        $npmExitCode = Invoke-OfficeTypesettingProcess -FilePath 'npm.cmd' -ArgumentList @('install', '-g', $package.Package)
+        if ($npmExitCode -ne 0) {
             throw "npm failed while installing $($package.Package)."
         }
     }
@@ -87,6 +100,42 @@ function Get-OfficeTypesettingDownloadRoot {
     $downloadRoot = Join-Path $officeTypesettingRoot 'downloads'
     Ensure-Directory -Path $downloadRoot
     return $downloadRoot
+}
+
+function Get-OfficeTypesettingStateRoot {
+    $localProgramsRoot = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Programs'
+    $officeTypesettingRoot = Join-Path $localProgramsRoot 'OfficeTypesettingTools'
+    Ensure-Directory -Path $officeTypesettingRoot
+
+    $stateRoot = Join-Path $officeTypesettingRoot 'state'
+    Ensure-Directory -Path $stateRoot
+    return $stateRoot
+}
+
+function Get-LibreOfficeExtensionSuppressMarker {
+    Join-Path (Get-OfficeTypesettingStateRoot) 'libreoffice-extensions.suppressed'
+}
+
+function Test-LibreOfficeExtensionInstalled {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ExtensionLeafName
+    )
+
+    $appData = [Environment]::GetFolderPath('ApplicationData')
+    $patterns = @(
+        (Join-Path $appData ("LibreOffice\4\user\uno_packages\cache\uno_packages\*\{0}" -f $ExtensionLeafName)),
+        (Join-Path $appData ("LibreOffice\4\user\extensions\tmp\extensions\*\{0}" -f $ExtensionLeafName))
+    )
+
+    foreach ($pattern in $patterns) {
+        $match = Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -ne $match) {
+            return $true
+        }
+    }
+
+    return $false
 }
 
 function Sync-OfficeTypesettingProcessPath {
@@ -148,13 +197,28 @@ if (`$ppt) {
 "@
 
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($loadScript))
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded | Out-Null
+    try {
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded | Out-Null
+    } catch {
+        Write-Warning ("IguanaTex was copied and trusted, but live PowerPoint auto-load was skipped: {0}" -f $_.Exception.Message)
+    }
     Write-Note ("IguanaTex installed at {0}" -f $installedPath)
 }
 
 function Install-LibreOfficeLatexExtensions {
     if ($SkipLibreOfficeExtensions) {
         Write-Note 'Skipping LibreOffice LaTeX extensions by request.'
+        return
+    }
+
+    $suppressMarker = Get-LibreOfficeExtensionSuppressMarker
+    if (Test-Path -LiteralPath $suppressMarker) {
+        Write-Warning ("Skipping LibreOffice extension registration because a previous unopkg failure was recorded at {0}. Remove that file if you want to retry." -f $suppressMarker)
+        return
+    }
+
+    if (Test-LibreOfficeExtensionInstalled -ExtensionLeafName 'TexMaths.oxt') {
+        Write-Note 'TexMaths is already detectable in the LibreOffice user profile; skipping repeated extension registration.'
         return
     }
 
@@ -183,9 +247,15 @@ function Install-LibreOfficeLatexExtensions {
     $texMathsPath = Join-Path $downloadRoot 'TexMaths.oxt'
     Invoke-WebRequest -Uri 'https://sourceforge.net/projects/texmaths/files/latest/download' -OutFile $texMathsPath -UserAgent 'Codex-Windows-Toolkit'
     Unblock-File -LiteralPath $texMathsPath -ErrorAction SilentlyContinue
-    & $unopkg add --force $texMathsPath
-    if ($LASTEXITCODE -ne 0) {
-        throw 'unopkg failed while installing TexMaths.'
+    $texMathsExitCode = Invoke-OfficeTypesettingProcess -FilePath $unopkg -ArgumentList @('add', '--force', $texMathsPath)
+    if ($texMathsExitCode -ne 0) {
+        if (Test-LibreOfficeExtensionInstalled -ExtensionLeafName 'TexMaths.oxt') {
+            Write-Warning 'unopkg returned a non-zero exit code for TexMaths, but the extension is now detectable. Continuing.'
+        } else {
+            Set-Content -LiteralPath $suppressMarker -Value ("TexMaths install failed via unopkg at {0}" -f (Get-Date).ToString('s')) -Encoding UTF8
+            Write-Warning ("unopkg failed while installing TexMaths. Future runs will skip LibreOffice extension registration until you remove {0}." -f $suppressMarker)
+            return
+        }
     }
 
     $writerZip = Join-Path $downloadRoot 'writer2latex161.zip'
@@ -200,9 +270,13 @@ function Install-LibreOfficeLatexExtensions {
     foreach ($extension in @('writer2latex.oxt', 'w2lconfig.oxt')) {
         $extensionPath = Join-Path $writerRoot $extension
         if (Test-Path -LiteralPath $extensionPath) {
-            & $unopkg add --force $extensionPath
-            if ($LASTEXITCODE -ne 0) {
-                throw "unopkg failed while installing $extension."
+            $writerExitCode = Invoke-OfficeTypesettingProcess -FilePath $unopkg -ArgumentList @('add', '--force', $extensionPath)
+            if ($writerExitCode -ne 0) {
+                if (Test-LibreOfficeExtensionInstalled -ExtensionLeafName $extension) {
+                    Write-Warning ("unopkg returned a non-zero exit code for {0}, but the extension is now detectable. Continuing." -f $extension)
+                } else {
+                    Write-Warning ("unopkg failed while installing {0}; continuing because Writer2LaTeX support is optional for the main PPT / textbook workflow." -f $extension)
+                }
             }
         }
     }
@@ -212,12 +286,20 @@ function Install-LibreOfficeLatexExtensions {
 
 function Initialize-MiKTeXForOfficeTypesetting {
     if (Test-CommandAvailable -Name 'initexmf') {
-        initexmf --set-config-value='[MPM]AutoInstall=1' | Out-Null
+        try {
+            initexmf --set-config-value='[MPM]AutoInstall=1' | Out-Null
+        } catch {
+            Write-Warning ("MiKTeX initexmf auto-install configuration was skipped: {0}" -f $_.Exception.Message)
+        }
     }
 
     if (Test-CommandAvailable -Name 'miktex') {
-        miktex packages update | Out-Null
-        miktex packages check-update | Out-Null
+        try {
+            miktex packages update | Out-Null
+            miktex packages check-update | Out-Null
+        } catch {
+            Write-Warning ("MiKTeX package refresh was skipped: {0}" -f $_.Exception.Message)
+        }
     }
 }
 

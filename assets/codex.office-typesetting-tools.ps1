@@ -38,7 +38,12 @@ function Resolve-CodexOfficeToolPath {
         }
 
         $expandedPath = [Environment]::ExpandEnvironmentVariables($candidatePath)
-        if (Test-Path -LiteralPath $expandedPath) {
+        if ($expandedPath.IndexOfAny(@('*', '?')) -ge 0) {
+            $match = Get-ChildItem -Path $expandedPath -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($null -ne $match) {
+                return $match.FullName
+            }
+        } elseif (Test-Path -LiteralPath $expandedPath) {
             return $expandedPath
         }
     }
@@ -160,8 +165,12 @@ function Get-CodexOfficeToolDefinitions {
             (Join-Path $desktopRoot 'OfficeTypesettingTools\downloads\IguanaTex_v1_62_1.ppam')
         ) -Description 'PowerPoint LaTeX add-in package')
         (New-CodexOfficeToolDefinition -Name 'TexMaths OXT' -VariableName 'TexMathsOxt' -CandidatePaths @(
+            (Join-Path $officeTypesettingRoot 'downloads\TexMaths.oxt'),
             (Join-Path $officeTypesettingRoot 'downloads\TexMaths-0.52.6.oxt'),
-            (Join-Path $desktopRoot 'OfficeTypesettingTools\downloads\TexMaths-0.52.6.oxt')
+            (Join-Path $desktopRoot 'OfficeTypesettingTools\downloads\TexMaths.oxt'),
+            (Join-Path $desktopRoot 'OfficeTypesettingTools\downloads\TexMaths-0.52.6.oxt'),
+            (Join-Path $appData 'LibreOffice\4\user\uno_packages\cache\uno_packages\*\TexMaths.oxt'),
+            (Join-Path $appData 'LibreOffice\4\user\extensions\tmp\extensions\*\TexMaths.oxt')
         ) -Description 'LibreOffice LaTeX equation extension package')
         (New-CodexOfficeToolDefinition -Name 'OfficeTypesettingTools root' -VariableName 'OfficeTypesettingToolsRoot' -CandidatePaths @(
             $officeTypesettingRoot,
