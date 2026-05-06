@@ -44,6 +44,7 @@ function Get-ToolkitContext {
         ToolkitNetworkGuidePath = (Join-Path (Join-Path $ToolkitRoot 'docs') 'Codex-Network-Toolkit.md')
         ToolkitShadowsocksGuidePath = (Join-Path (Join-Path $ToolkitRoot 'docs') 'Codex-Shadowsocks-Toolkit.md')
         ToolkitWebAuthGuidePath = (Join-Path (Join-Path $ToolkitRoot 'docs') 'Codex-Web-Auth-Toolkit.md')
+        ToolkitOfficeTypesettingGuidePath = (Join-Path (Join-Path $ToolkitRoot 'docs') 'Codex-Office-Typesetting-Toolkit.md')
         ToolkitShadowsocksActiveSecretPath = (Join-Path (Join-Path (Join-Path $ToolkitRoot 'config') 'private') 'shadowsocks.active.json')
         ToolkitAndroidApkToolsPath = (Join-Path (Join-Path $ToolkitRoot 'examples') 'android-apk-tools')
         ToolkitBrowserExtensionStarterPath = (Join-Path (Join-Path $ToolkitRoot 'examples') 'browser-extension-starter')
@@ -231,7 +232,12 @@ function Test-ToolkitOcrHealthyDeep {
 function Get-ToolkitInventoryCommandNames {
     $commandNames = New-Object System.Collections.Generic.List[string]
 
-    foreach ($package in @($script:Manifest.WingetPackages + $script:Manifest.OptionalWingetPackages)) {
+    $packageGroups = @($script:Manifest.WingetPackages + $script:Manifest.OptionalWingetPackages)
+    if ($script:Manifest.ContainsKey('OfficeTypesettingWingetPackages')) {
+        $packageGroups += $script:Manifest.OfficeTypesettingWingetPackages
+    }
+
+    foreach ($package in $packageGroups) {
         foreach ($commandName in $package.Commands) {
             if (-not [string]::IsNullOrWhiteSpace($commandName)) {
                 [void]$commandNames.Add($commandName)
@@ -252,7 +258,12 @@ function Get-ToolkitInventoryCommandNames {
         'auth-chatgpt-save', 'auth-chatgpt-ask', 'auth-chatgpt-delete', 'auth-perplexity-ask', 'auth-extension-install', 'auth-extension-list',
         'auth-extension-enable', 'auth-extension-disable', 'auth-extension-open', 'auth-extension-click',
         'auth-extension-remove', 'auth-help', 'easyocr-read',
-        'paddleocr-read', 'donut-ocr', 'llava', 'nougat', 'ocrmypdf'
+        'paddleocr-read', 'donut-ocr', 'llava', 'nougat', 'ocrmypdf',
+        'office-tools', 'office-tool-paths', 'office-samples', 'typst-pdf', 'tex-xe',
+        'marp-deck', 'marp-pptx', 'marp-pdf', 'marp-pptx-editable',
+        'typst', 'marp', 'xelatex', 'pdflatex', 'latexmk', 'dvisvgm',
+        'pandoc', 'magick', 'gswin64c', 'soffice', 'unopkg', 'inkscape',
+        'draw.io', 'SumatraPDF', 'scribus'
     )) {
         [void]$commandNames.Add($name)
     }

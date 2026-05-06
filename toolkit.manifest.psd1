@@ -253,6 +253,87 @@
         }
     )
 
+    OfficeTypesettingWingetPackages = @(
+        @{
+            Id = 'MiKTeX.MiKTeX'
+            DisplayName = 'MiKTeX'
+            Commands = @('xelatex', 'pdflatex', 'latexmk', 'dvisvgm', 'mpm')
+            Category = 'OfficeTypesetting'
+            Scope = 'user'
+        }
+        @{
+            Id = 'TheDocumentFoundation.LibreOffice'
+            DisplayName = 'LibreOffice'
+            Commands = @('soffice', 'unopkg')
+            Category = 'OfficeTypesetting'
+            Scope = 'default'
+        }
+        @{
+            Id = 'EclipseAdoptium.Temurin.21.JRE'
+            DisplayName = 'Eclipse Temurin JRE 21'
+            Commands = @('java')
+            Category = 'OfficeTypesetting'
+            Scope = 'default'
+        }
+        @{
+            Id = 'Typst.Typst'
+            DisplayName = 'Typst'
+            Commands = @('typst')
+            Category = 'OfficeTypesetting'
+            Scope = 'user'
+        }
+        @{
+            Id = 'JohnMacFarlane.Pandoc'
+            DisplayName = 'Pandoc'
+            Commands = @('pandoc')
+            Category = 'OfficeTypesetting'
+            Scope = 'default'
+        }
+        @{
+            Id = 'Inkscape.Inkscape'
+            DisplayName = 'Inkscape'
+            Commands = @('inkscape')
+            Category = 'OfficeTypesetting'
+            Scope = 'default'
+        }
+        @{
+            Id = 'JGraph.Draw'
+            DisplayName = 'draw.io'
+            Commands = @('draw.io')
+            Category = 'OfficeTypesetting'
+            Scope = 'default'
+        }
+        @{
+            Id = 'SumatraPDF.SumatraPDF'
+            DisplayName = 'SumatraPDF'
+            Commands = @('SumatraPDF')
+            Category = 'OfficeTypesetting'
+            Scope = 'default'
+        }
+        @{
+            Id = 'Scribus.Scribus'
+            DisplayName = 'Scribus'
+            Commands = @('scribus')
+            Category = 'OfficeTypesetting'
+            Scope = 'default'
+        }
+        @{
+            Id = 'Hibbiki.Chromium'
+            DisplayName = 'Chromium'
+            Commands = @('chrome')
+            Category = 'OfficeTypesetting'
+            Scope = 'user'
+        }
+    )
+
+    OfficeTypesettingNpmGlobalPackages = @(
+        @{
+            Package = '@marp-team/marp-cli'
+            DisplayName = 'Marp CLI'
+            Commands = @('marp')
+        }
+    )
+
     WebAuthPythonModules = @(
         @{
             Package = 'requests'
