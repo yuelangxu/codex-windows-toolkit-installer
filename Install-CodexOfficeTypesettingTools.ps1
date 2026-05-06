@@ -145,6 +145,58 @@ function Sync-OfficeTypesettingProcessPath {
     $env:Path = [string]::Join(';', $pathParts)
 }
 
+function Register-PowerPointAddInForAutoLoad {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$AddInPath
+    )
+
+    $ppt = $null
+    $addin = $null
+    $createdInstance = $false
+
+    try {
+        try {
+            $ppt = [Runtime.InteropServices.Marshal]::GetActiveObject('PowerPoint.Application')
+        } catch {
+            $ppt = $null
+        }
+
+        if ($null -eq $ppt) {
+            $ppt = New-Object -ComObject PowerPoint.Application
+            $createdInstance = $true
+        }
+
+        $ppt.Visible = -1
+        foreach ($candidate in @($ppt.AddIns)) {
+            if ($candidate.FullName -eq $AddInPath -or $candidate.Name -like 'IguanaTex*') {
+                $addin = $candidate
+                break
+            }
+        }
+
+        if ($null -eq $addin) {
+            $addin = $ppt.AddIns.Add($AddInPath)
+        }
+
+        # AutoLoad is the durable setting: it also marks the add-in as registered.
+        $addin.AutoLoad = -1
+        $addin.Loaded = -1
+    } finally {
+        if ($null -ne $addin) {
+            [Runtime.InteropServices.Marshal]::ReleaseComObject($addin) | Out-Null
+        }
+
+        if ($null -ne $ppt) {
+            if ($createdInstance) {
+                $ppt.Quit()
+            }
+
+            [Runtime.InteropServices.Marshal]::ReleaseComObject($ppt) | Out-Null
+        }
+    }
+}
+
 function Install-IguanaTexPowerPointAddIn {
     if ($SkipPowerPointAddIn) {
         Write-Note 'Skipping IguanaTex PowerPoint add-in by request.'
@@ -174,33 +226,10 @@ function Install-IguanaTexPowerPointAddIn {
     New-ItemProperty -Path $trustedLocation -Name AllowSubfolders -Value 1 -PropertyType DWord -Force | Out-Null
     New-ItemProperty -Path $trustedLocation -Name Description -Value 'Codex Office typesetting add-ins' -PropertyType String -Force | Out-Null
 
-    $loadScript = @"
-`$addinPath = '$($installedPath.Replace("'", "''"))'
-try {
-    `$ppt = [Runtime.InteropServices.Marshal]::GetActiveObject('PowerPoint.Application')
-} catch {
-    `$ppt = `$null
-}
-if (`$ppt) {
-    `$found = `$null
-    foreach (`$addin in @(`$ppt.AddIns)) {
-        if (`$addin.FullName -eq `$addinPath -or `$addin.Name -like 'IguanaTex*') {
-            `$found = `$addin
-        }
-    }
-    if (-not `$found) {
-        `$found = `$ppt.AddIns.Add(`$addinPath)
-    }
-    `$found.Loaded = `$true
-    [Runtime.InteropServices.Marshal]::ReleaseComObject(`$ppt) | Out-Null
-}
-"@
-
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($loadScript))
     try {
-        powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded | Out-Null
+        Register-PowerPointAddInForAutoLoad -AddInPath $installedPath
     } catch {
-        Write-Warning ("IguanaTex was copied and trusted, but live PowerPoint auto-load was skipped: {0}" -f $_.Exception.Message)
+        Write-Warning ("IguanaTex was copied and trusted, but durable PowerPoint auto-load registration was skipped: {0}" -f $_.Exception.Message)
     }
     Write-Note ("IguanaTex installed at {0}" -f $installedPath)
 }
